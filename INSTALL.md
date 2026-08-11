@@ -1,7 +1,7 @@
 # คู่มือการติดตั้งระบบจัดซื้อวัสดุพัสดุ (Production Installation & Deployment Guide)
 
 คู่มือนี้ระบุขั้นตอนแบบละเอียดตั้งแต่ศูนย์ (Step-by-Step) สำหรับการติดตั้งระบบบนเซิร์ฟเวอร์จริง (Production Server) โดยอ้างอิงตามสถาปัตยกรรมและรายละเอียดโครงสร้างพื้นฐานของคุณดังนี้:
-*   **Frontend & API Server (Node.js Express App):** รันบน IP **`10.1.0.15:3000`** (หรือตามไอพีเซิร์ฟเวอร์หลักของคุณ) ให้บริการผ่าน subpath **`/MatPlan`**
+*   **Frontend & API Server (Node.js Express App):** รันบน IP **`10.1.0.15:3005`** (หรือตามไอพีเซิร์ฟเวอร์หลักของคุณ) ให้บริการผ่าน subpath **`/MatPlan`**
 *   **Database Server (MySQL):** ติดตั้งบน IP **`10.1.0.201`** พอร์ต `3306` (ชื่อฐานข้อมูล: `MatPlan`)
 
 > 💡 **หมายเหตุสำหรับการอัปเดตระบบที่มีอยู่แล้ว:**
@@ -102,22 +102,17 @@ nano .env
 
 **ระบุข้อมูลลงในไฟล์ `.env` ดังนี้:**
 ```env
-# ตั้งค่าสถานะแวดล้อมเป็น production
-NODE_ENV=production
+PORT=3005
+APP_URL="http://10.2.0.15:3000/MatPlan"
 
-# พอร์ตสำหรับรัน Backend Server
-PORT=3000
-
-# URL สำหรับอ้างอิงตัวระบบ
-APP_URL="http://10.1.0.15:3000/MatPlan"
-
-# การเชื่อมต่อฐานข้อมูล MySQL (เครื่องฐานข้อมูลปลายทาง)
-DB_HOST=10.1.0.201
-DB_USER=root
-DB_PASSWORD=your_secure_password
+# การเชื่อมต่อฐานข้อมูล MySQL (10.2.0.201)
+DB_HOST=10.2.0.201
+DB_PORT=3306
+DB_USER=MatPlan
+DB_PASS=your_secure_password
 DB_NAME=MatPlan
 
-# คีย์สำหรับการเข้ารหัสความปลอดภัย JWT Token สำหรับระบบล็อกอิน
+# ความปลอดภัย JWT (คีย์สำหรับการเข้ารหัส Token)
 JWT_SECRET=MatPlan_SecretKey_2026_SecureKey_ChangeThis
 ```
 

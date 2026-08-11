@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import fs from 'fs';
 import path from 'path';
 import mysql from 'mysql2/promise';
@@ -89,13 +92,15 @@ let dbCache: DbSchema = initializeDb();
 let mysqlPool: mysql.Pool | null = null;
 const DB_HOST = process.env.DB_HOST;
 const DB_USER = process.env.DB_USER;
-const DB_PASSWORD = process.env.DB_PASSWORD;
+const DB_PASSWORD = process.env.DB_PASSWORD || process.env.DB_PASS;
 const DB_NAME = process.env.DB_NAME || 'MatPlan';
+const DB_PORT = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
 
 if (DB_HOST && DB_USER) {
-  console.log(`[MySQL] Configuring connection pool for host: ${DB_HOST}, database: ${DB_NAME}`);
+  console.log(`[MySQL] Configuring connection pool for host: ${DB_HOST}:${DB_PORT}, database: ${DB_NAME}`);
   mysqlPool = mysql.createPool({
     host: DB_HOST,
+    port: DB_PORT,
     user: DB_USER,
     password: DB_PASSWORD,
     database: DB_NAME,

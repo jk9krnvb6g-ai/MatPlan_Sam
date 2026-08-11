@@ -66,23 +66,26 @@
 
 ### ขั้นตอนที่ 3: ตรวจสอบและอัปเดตไฟล์ `.env`
 
-เปิดไฟล์ `.env` บนเครื่อง Application Server เพื่อตรวจสอบค่าและเพิ่มตัวแปรระบบความปลอดภัย JWT (`JWT_SECRET`):
+เปิดไฟล์ `.env` บนเครื่อง Application Server เพื่อกำหนดค่าพอร์ตและการเชื่อมต่อฐานข้อมูล:
 
 ```env
-PORT=3000
-NODE_ENV=production
+PORT=3005
+APP_URL="http://10.2.0.15:3000/MatPlan"
 
-# การเชื่อมต่อฐานข้อมูล MySQL (เครื่องฐานข้อมูลในรูปของท่านคือ 10.1.0.201)
-DB_HOST=10.1.0.201
+# การเชื่อมต่อฐานข้อมูล MySQL (10.2.0.201)
+DB_HOST=10.2.0.201
 DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_mysql_password
+DB_USER=MatPlan
+DB_PASS=your_secure_password
 DB_NAME=MatPlan
 
-# ความปลอดภัย JWT (คีย์สำหรับการเข้ารหัส Token สำหรับระบบ Login ใหม่)
-# กรุณาตั้งค่ารหัสสุ่มที่มีความปลอดภัยสูง
+# ความปลอดภัย JWT (คีย์สำหรับการเข้ารหัส Token)
 JWT_SECRET=MatPlan_SecretKey_2026_SecureKey_ChangeThis
 ```
+
+> 💡 **คำอธิบายเรื่องพอร์ตการทำงาน (Port Architecture):**
+> * **Backend Server (`PORT=3005`):** ตัว Node.js/Express จะรันอยู่เบื้องหลังบนพอร์ต **3005** เพื่อป้องกันไม่ให้ชนกับแอปพลิเคชันอื่น
+> * **Frontend External Access (`:3000`):** ผู้ใช้งานหรือโปรแกรมภายนอกจะเข้าใช้งานผ่าน Nginx / Web Server พอร์ต **3000** (`http://10.2.0.15:3000/MatPlan`) ซึ่ง Nginx จะทำหน้าที่ Proxy ส่งต่อคำขอภายในไปยังพอร์ต 3005 ของ Backend โดยอัตโนมัติ
 
 ---
 
@@ -163,7 +166,7 @@ JWT_SECRET=MatPlan_SecretKey_2026_SecureKey_ChangeThis
 *(แนะนำให้ผู้ใช้ทุกท่านเปลี่ยนรหัสผ่านในภายหลังผ่านเมนูโปรไฟล์เพื่อความปลอดภัย)*
 
 ### 4.3 ตรวจสอบหน้าจอ Live MySQL Explorer
-1. เข้าใช้งานระบบผ่านเบราว์เซอร์ที่เครื่อง App Server (เช่น `http://10.1.0.15/MatPlan` หรือ `http://10.1.0.15:3000`)
+1. เข้าใช้งานระบบผ่านเบราว์เซอร์ที่เครื่อง App Server (เช่น `http://10.1.0.15:3005/MatPlan`)
 2. ล็อกอินด้วยสิทธิ์เจ้าหน้าที่พัสดุ (`procurement` / `password`)
 3. ไปที่เมนู **"ฝ่ายพัสดุ (Procurement)"**
 4. คลิกแท็บ **"⚡ Live MySQL Explorer (Server-side Pagination)"**
@@ -172,6 +175,35 @@ JWT_SECRET=MatPlan_SecretKey_2026_SecureKey_ChangeThis
 ---
 
 ## 5. การรับมือและแก้ไขปัญหาหากเกิดข้อผิดพลาด (Troubleshooting & Rollback)
+
+* **ปัญหา: ขึ้น `Error: listen EADDRINUSE: address already in use 0.0.0.0:3000` (พอร์ตชนกับแอปอื่น)**
+  * *สาเหตุ:* พอร์ต `3000` ถูกใช้งานโดยระบบเดิมบนเครื่อง ให้เปลี่ยนไปใช้พอร์ต **`3005`** ตามที่กำหนด
+  * *การแก้ไข:* 
+    1. ตรวจสอบไฟล์ `.env` บนเครื่อง ให้ตั้งค่าเป็น:
+       ```env
+       PORT=3005
+       ```
+    2. รัน `npm run build` ใหม่เพื่ออัปเดตการตั้งค่าพอร์ตเข้าสู่ไฟล์คอมไพล์
+    3. สั่งลบโปรเซสเดิมและเริ่มรันใหม่บนพอร์ต 3005:
+       ```bash
+       pm2 delete MatPlan
+       pm2 start dist/server.cjs --name MatPlan
+       pm2 save
+       ```
+
+* **ปัญหา: ขึ้น `[MySQL] DB_HOST or DB_USER not set. Using local file-based db.json storage.`**
+  * *สาเหตุ:* ตัว Node.js ไม่ได้โหลดค่าจากไฟล์ `.env` หรือยังไม่ได้ Build โค้ดใหม่
+  * *การแก้ไข:*
+    1. ตรวจสอบว่าในโฟลเดอร์แอปมีไฟล์ `.env` อยู่จริง และมีบรรทัด `DB_HOST=10.1.0.201` และ `DB_USER=root` เรียบร้อย
+    2. รัน `git pull` เพื่อดึงโค้ดล่าสุด (ที่เพิ่ม `dotenv.config()` ไว้ใน `server.ts` และ `db.ts`)
+    3. สั่ง Build โครงการใหม่ด้วยคำสั่ง:
+       ```bash
+       npm run build
+       ```
+    4. สั่ง restart PM2:
+       ```bash
+       pm2 restart MatPlan
+       ```
 
 * **ปัญหา: PM2 ขึ้น Error เชื่อมต่อ MySQL ไม่ได้**
   * *การแก้ไข:* ตรวจสอบว่า IP `10.1.0.201` เปิดให้เครื่อง App Server เชื่อมต่อเข้าพอร์ต `3306` ได้หรือไม่ และตรวจสอบความถูกต้องของ `DB_PASSWORD` ในไฟล์ `.env`
