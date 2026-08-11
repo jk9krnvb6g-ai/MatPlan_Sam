@@ -1,0 +1,443 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Sarabun', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #1E293B;
+    background-color: #F8FAFC;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  html.dark body {
+    color: #FFFFFF;
+    background-color: #060913;
+  }
+
+  html {
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    transition: font-size 0.2s ease-in-out;
+  }
+
+  html.font-normal {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  html.font-large {
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  html.font-extra-large {
+    font-size: 16px;
+    line-height: 1.7;
+  }
+
+  /* Table Cell Height & Padding Scaling for Senior Staff Readability */
+  html.font-large th,
+  html.font-large td {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  html.font-extra-large th,
+  html.font-extra-large td {
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+
+  /* Form control comfort spacing when scaled */
+  html.font-extra-large input,
+  html.font-extra-large select,
+  html.font-extra-large textarea {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+}
+
+/* Global Dark Mode Helper Overrides */
+html.dark {
+  color-scheme: dark;
+}
+
+html.dark .bg-white {
+  background-color: #11182c !important;
+}
+
+html.dark .bg-[#F8FAFC] {
+  background-color: #060913 !important;
+}
+
+html.dark .bg-slate-50 {
+  background-color: #0c1020 !important;
+}
+
+html.dark .bg-slate-100 {
+  background-color: #0c1020 !important;
+}
+
+html.dark .bg-slate-200 {
+  background-color: #1f2b48 !important;
+}
+
+/* Opacity background variations */
+html.dark .bg-slate-50\/70 {
+  background-color: rgba(12, 16, 32, 0.7) !important;
+}
+
+html.dark .bg-slate-200\/80 {
+  background-color: rgba(31, 43, 72, 0.8) !important;
+}
+
+html.dark .bg-teal-50\/70 {
+  background-color: rgba(13, 148, 136, 0.15) !important;
+}
+
+html.dark .bg-indigo-50 {
+  background-color: rgba(99, 102, 241, 0.15) !important;
+}
+
+html.dark .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.15) !important;
+}
+
+html.dark .bg-rose-50 {
+  background-color: rgba(244, 63, 94, 0.12) !important;
+}
+
+html.dark .bg-rose-50\/80 {
+  background-color: rgba(244, 63, 94, 0.12) !important;
+}
+
+html.dark .bg-rose-50\/70 {
+  background-color: rgba(244, 63, 94, 0.1) !important;
+}
+
+html.dark .bg-rose-100 {
+  background-color: rgba(244, 63, 94, 0.18) !important;
+}
+
+html.dark .bg-rose-100\/60 {
+  background-color: rgba(244, 63, 94, 0.12) !important;
+}
+
+html.dark .bg-amber-50 {
+  background-color: rgba(245, 158, 11, 0.12) !important;
+}
+
+html.dark .bg-amber-50\/90 {
+  background-color: rgba(245, 158, 11, 0.12) !important;
+}
+
+html.dark .bg-amber-100 {
+  background-color: rgba(245, 158, 11, 0.18) !important;
+}
+
+html.dark .bg-purple-50 {
+  background-color: rgba(168, 85, 247, 0.12) !important;
+}
+
+html.dark .bg-purple-50\/90 {
+  background-color: rgba(168, 85, 247, 0.12) !important;
+}
+
+html.dark .bg-purple-50\/60 {
+  background-color: rgba(168, 85, 247, 0.1) !important;
+}
+
+html.dark .bg-purple-100 {
+  background-color: rgba(168, 85, 247, 0.18) !important;
+}
+
+html.dark .bg-blue-50 {
+  background-color: rgba(59, 130, 246, 0.12) !important;
+}
+
+html.dark .bg-blue-50\/90 {
+  background-color: rgba(59, 130, 246, 0.12) !important;
+}
+
+html.dark .bg-blue-100 {
+  background-color: rgba(59, 130, 246, 0.18) !important;
+}
+
+html.dark .bg-cyan-50 {
+  background-color: rgba(6, 182, 212, 0.12) !important;
+}
+
+html.dark .bg-emerald-100 {
+  background-color: rgba(16, 185, 129, 0.18) !important;
+}
+
+html.dark .bg-teal-100 {
+  background-color: rgba(20, 184, 166, 0.18) !important;
+}
+
+html.dark .bg-indigo-100 {
+  background-color: rgba(99, 102, 241, 0.18) !important;
+}
+
+html.dark .bg-indigo-50\/90 {
+  background-color: rgba(99, 102, 241, 0.12) !important;
+}
+
+html.dark .bg-emerald-50\/90 {
+  background-color: rgba(16, 185, 129, 0.12) !important;
+}
+
+/* Base Typographic Hierarchy overrides for Dark Mode */
+html.dark .text-slate-900 {
+  color: #ffffff !important;
+}
+
+html.dark .text-slate-800 {
+  color: #f1f5f9 !important;
+}
+
+html.dark .text-slate-700 {
+  color: #cbd5e1 !important;
+}
+
+html.dark .text-slate-600 {
+  color: #94a3b8 !important;
+}
+
+html.dark .text-slate-500 {
+  color: #64748b !important;
+}
+
+html.dark .text-slate-400 {
+  color: #475569 !important;
+}
+
+/* Light text color overrides inside color containers (originally very dark/near black) */
+html.dark .text-rose-950,
+html.dark .text-rose-900,
+html.dark .text-rose-800,
+html.dark .text-rose-700 {
+  color: #fca5a5 !important;
+}
+
+html.dark .text-amber-950,
+html.dark .text-amber-900,
+html.dark .text-amber-800,
+html.dark .text-amber-700 {
+  color: #fcd34d !important;
+}
+
+html.dark .text-teal-950,
+html.dark .text-teal-900,
+html.dark .text-teal-800,
+html.dark .text-teal-700 {
+  color: #5eead4 !important;
+}
+
+html.dark .text-indigo-950,
+html.dark .text-indigo-900,
+html.dark .text-indigo-800,
+html.dark .text-indigo-700 {
+  color: #c7d2fe !important;
+}
+
+html.dark .text-blue-950,
+html.dark .text-blue-900,
+html.dark .text-blue-800,
+html.dark .text-blue-700 {
+  color: #93c5fd !important;
+}
+
+html.dark .text-purple-950,
+html.dark .text-purple-900,
+html.dark .text-purple-800,
+html.dark .text-purple-700 {
+  color: #e9d5ff !important;
+}
+
+html.dark .text-emerald-950,
+html.dark .text-emerald-900,
+html.dark .text-emerald-800,
+html.dark .text-emerald-700 {
+  color: #6ee7b7 !important;
+}
+
+/* Border overrides to match dark theme contexts */
+html.dark .border-slate-100 {
+  border-color: #1a253b !important;
+}
+
+html.dark .border-slate-200 {
+  border-color: #1a253b !important;
+}
+
+html.dark .border-slate-200\/90 {
+  border-color: #1a253b !important;
+}
+
+html.dark .border-slate-300 {
+  border-color: #2d3d5c !important;
+}
+
+html.dark .border-rose-100,
+html.dark .border-rose-200,
+html.dark .border-rose-300 {
+  border-color: rgba(244, 63, 94, 0.3) !important;
+}
+
+html.dark .border-rose-200\/60 {
+  border-color: rgba(244, 63, 94, 0.2) !important;
+}
+
+html.dark .border-amber-100,
+html.dark .border-amber-200,
+html.dark .border-amber-300 {
+  border-color: rgba(245, 158, 11, 0.3) !important;
+}
+
+html.dark .border-teal-100,
+html.dark .border-teal-200,
+html.dark .border-teal-300 {
+  border-color: rgba(20, 184, 166, 0.3) !important;
+}
+
+html.dark .border-indigo-100,
+html.dark .border-indigo-200,
+html.dark .border-indigo-300 {
+  border-color: rgba(99, 102, 241, 0.3) !important;
+}
+
+html.dark .border-blue-100,
+html.dark .border-blue-200,
+html.dark .border-blue-300 {
+  border-color: rgba(59, 130, 246, 0.3) !important;
+}
+
+html.dark .border-purple-100,
+html.dark .border-purple-200,
+html.dark .border-purple-300 {
+  border-color: rgba(168, 85, 247, 0.3) !important;
+}
+
+html.dark .border-emerald-100,
+html.dark .border-emerald-200,
+html.dark .border-emerald-300 {
+  border-color: rgba(16, 185, 129, 0.3) !important;
+}
+
+html.dark input, 
+html.dark select, 
+html.dark textarea {
+  background-color: #060913 !important;
+  color: #FFFFFF !important;
+  border-color: #2d3d5c !important;
+}
+
+html.dark input::placeholder {
+  color: #64748B !important;
+}
+
+/* Hover background modifications */
+html.dark .hover\:bg-slate-50:hover,
+html.dark .hover\:bg-slate-100:hover,
+html.dark .hover\:bg-slate-200:hover {
+  background-color: #1f2b48 !important;
+}
+
+html.dark .hover\:bg-blue-100:hover {
+  background-color: rgba(59, 130, 246, 0.25) !important;
+}
+
+html.dark .hover\:bg-indigo-100:hover {
+  background-color: rgba(99, 102, 241, 0.25) !important;
+}
+
+html.dark .hover\:bg-emerald-100:hover {
+  background-color: rgba(16, 185, 129, 0.25) !important;
+}
+
+html.dark .hover\:bg-amber-100:hover {
+  background-color: rgba(245, 158, 11, 0.25) !important;
+}
+
+html.dark .hover\:bg-purple-100:hover {
+  background-color: rgba(168, 85, 247, 0.25) !important;
+}
+
+html.dark .hover\:bg-rose-100:hover {
+  background-color: rgba(244, 63, 94, 0.25) !important;
+}
+
+html.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #1a253b !important;
+}
+
+/* Brand Theme Utility Helpers */
+.bg-brand-indigo {
+  background-color: #4F46E5;
+}
+
+.bg-brand-indigo-hover:hover {
+  background-color: #4338CA;
+}
+
+.text-brand-indigo {
+  color: #4F46E5;
+}
+
+.border-brand-indigo {
+  border-color: #4F46E5;
+}
+
+.bg-brand-cyan {
+  background-color: #06B6D4;
+}
+
+.text-brand-cyan {
+  color: #06B6D4;
+}
+
+.bg-navy-dark {
+  background-color: #0F172A;
+}
+
+/* Custom Scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Print Styles for Export PDF */
+@media print {
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  
+  /* Hide all elements on screen during print */
+  body > * {
+    display: none !important;
+  }
+
+  /* Only show the print container */
+  #printable-excel-area {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    visibility: visible !important;
+  }
+
+  #printable-excel-area * {
+    visibility: visible !important;
+  }
+
+  .page-break-before-always {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+}
