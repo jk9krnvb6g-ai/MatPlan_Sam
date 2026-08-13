@@ -443,6 +443,19 @@ export async function setupMySQLTables(): Promise<{
   }
 }
 
+// Helper to repair double-encoded Latin1/UTF-8 Mojibake (e.g. "เธเธ...")
+function fixMojibake(str: string | null | undefined): string {
+  if (!str || typeof str !== 'string') return str || '';
+  if (!str.includes('เธ') && !str.includes('เธน') && !str.includes('เน') && !str.includes('เธฃ')) return str;
+  try {
+    const fixed = Buffer.from(str, 'latin1').toString('utf-8');
+    if (/[\u0E00-\u0E7F]/.test(fixed)) {
+      return fixed;
+    }
+  } catch (e) {}
+  return str;
+}
+
 async function loadRelationalState(): Promise<DbSchema | null> {
   if (!mysqlPool) return null;
   try {
@@ -452,21 +465,32 @@ async function loadRelationalState(): Promise<DbSchema | null> {
       return null;
     }
 
-    const workGroups: WorkGroup[] = wgRows.map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      description: row.description || undefined,
-      code: row.code || undefined
-    }));
+    let hadMojibake = false;
+
+    const workGroups: WorkGroup[] = wgRows.map((row: any) => {
+      const fixedName = fixMojibake(row.name);
+      const fixedDesc = fixMojibake(row.description);
+      if (fixedName !== row.name || fixedDesc !== row.description) hadMojibake = true;
+      return {
+        id: row.id,
+        name: fixedName,
+        description: fixedDesc || undefined,
+        code: row.code || undefined
+      };
+    });
 
     // Load departments
     const [deptRows]: any = await mysqlPool.query('SELECT * FROM departments');
-    const departments: Department[] = deptRows.map((row: any) => ({
-      id: row.id,
-      name: row.name,
-      category: row.category,
-      workGroupId: row.work_group_id || undefined
-    }));
+    const departments: Department[] = deptRows.map((row: any) => {
+      const fixedName = fixMojibake(row.name);
+      if (fixedName !== row.name) hadMojibake = true;
+      return {
+        id: row.id,
+        name: fixedName,
+        category: row.category,
+        workGroupId: row.work_group_id || undefined
+      };
+    });
 
     // Load users
     const [userRows]: any = await mysqlPool.query('SELECT * FROM users');
@@ -477,12 +501,14 @@ async function loadRelationalState(): Promise<DbSchema | null> {
           extraRoles = JSON.parse(row.roles);
         }
       } catch (e) {}
+      const fixedName = fixMojibake(row.name);
+      if (fixedName !== row.name) hadMojibake = true;
       return {
         username: row.username,
         password: row.password,
         role: row.role,
         roles: extraRoles.length > 0 ? extraRoles : undefined,
-        name: row.name,
+        name: fixedName,
         category: row.category || undefined,
         deptId: row.dept_id,
         status: row.status
@@ -491,43 +517,66 @@ async function loadRelationalState(): Promise<DbSchema | null> {
 
     // Load requests
     const [reqRows]: any = await mysqlPool.query('SELECT * FROM requests');
-    const requests: RequestItem[] = reqRows.map((row: any) => ({
-      id: row.id,
-      deptId: row.dept_id,
-      itemName: row.item_name,
-      unit: row.unit,
-      qtyLastYear: row.qty_last_year,
-      qtyRequested: row.qty_requested,
-      status: row.status,
-      comment: row.comment || '',
-      reason: row.reason || '',
-      unitPrice: row.unit_price !== null ? Number(row.unit_price) : null,
-      fiscalYear: row.fiscal_year || undefined,
-      createdAt: row.created_at || undefined,
-      updatedAt: row.updated_at || undefined,
-      requesterName: row.requester_name || undefined,
-      requesterSubDept: row.requester_sub_dept || undefined,
-      qtyOriginal: row.qty_original !== null ? Number(row.qty_original) : undefined,
-      qtyAdjusted: row.qty_adjusted !== null ? Number(row.qty_adjusted) : undefined,
-      adjustedByRole: row.adjusted_by_role || undefined,
-      adjustedByName: row.adjusted_by_name || undefined,
-      adjustedAt: row.adjusted_at || undefined,
-      rejectedByRole: row.rejected_by_role || undefined,
-      rejectedByName: row.rejected_by_name || undefined,
-      rejectedAt: row.rejected_at || undefined
-    }));
+    const requests: RequestItem[] = reqRows.map((row: any) => {
+      const fixedItemName = fixMojibake(row.item_name);
+      const fixedUnit = fixMojibake(row.unit);
+      const fixedComment = fixMojibake(row.comment);
+      const fixedReason = fixMojibake(row.reason);
+      const fixedReqName = fixMojibake(row.requester_name);
+      const fixedReqSubDept = fixMojibake(row.requester_sub_dept);
+      if (
+        fixedItemName !== row.item_name ||
+        fixedUnit !== row.unit ||
+        fixedComment !== row.comment ||
+        fixedReason !== row.reason ||
+        fixedReqName !== row.requester_name ||
+        fixedReqSubDept !== row.requester_sub_dept
+      ) {
+        hadMojibake = true;
+      }
+      return {
+        id: row.id,
+        deptId: row.dept_id,
+        itemName: fixedItemName,
+        unit: fixedUnit,
+        qtyLastYear: row.qty_last_year,
+        qtyRequested: row.qty_requested,
+        status: row.status,
+        comment: fixedComment || '',
+        reason: fixedReason || '',
+        unitPrice: row.unit_price !== null ? Number(row.unit_price) : null,
+        fiscalYear: row.fiscal_year || undefined,
+        createdAt: row.created_at || undefined,
+        updatedAt: row.updated_at || undefined,
+        requesterName: fixedReqName || undefined,
+        requesterSubDept: fixedReqSubDept || undefined,
+        qtyOriginal: row.qty_original !== null ? Number(row.qty_original) : undefined,
+        qtyAdjusted: row.qty_adjusted !== null ? Number(row.qty_adjusted) : undefined,
+        adjustedByRole: row.adjusted_by_role || undefined,
+        adjustedByName: fixMojibake(row.adjusted_by_name) || undefined,
+        adjustedAt: row.adjusted_at || undefined,
+        rejectedByRole: row.rejected_by_role || undefined,
+        rejectedByName: fixMojibake(row.rejected_by_name) || undefined,
+        rejectedAt: row.rejected_at || undefined
+      };
+    });
 
     // Load logs
     const [logRows]: any = await mysqlPool.query('SELECT * FROM system_logs');
-    const logs: LogEntry[] = logRows.map((row: any) => ({
-      id: row.id,
-      timestamp: row.timestamp,
-      username: row.username,
-      name: row.name,
-      actionType: row.action_type,
-      module: row.module,
-      description: row.description
-    }));
+    const logs: LogEntry[] = logRows.map((row: any) => {
+      const fixedName = fixMojibake(row.name);
+      const fixedDesc = fixMojibake(row.description);
+      if (fixedName !== row.name || fixedDesc !== row.description) hadMojibake = true;
+      return {
+        id: row.id,
+        timestamp: row.timestamp,
+        username: row.username,
+        name: fixedName,
+        actionType: row.action_type,
+        module: row.module,
+        description: fixedDesc
+      };
+    });
 
     // Load settings
     const [settingRows]: any = await mysqlPool.query('SELECT * FROM system_settings');
@@ -561,7 +610,7 @@ async function loadRelationalState(): Promise<DbSchema | null> {
     const isCatalogCleared = settingsMap['isCatalogCleared'] === 'true';
     const fiscalYear = settingsMap['fiscalYear'] || '2569';
 
-    return {
+    const cleanedState: DbSchema = {
       workGroups,
       departments,
       users,
@@ -574,6 +623,15 @@ async function loadRelationalState(): Promise<DbSchema | null> {
       isCatalogCleared,
       logs
     };
+
+    if (hadMojibake) {
+      console.log('[MySQL Auto-Repair] Mojibake text detected in database rows. Auto-saving clean UTF-8 text back to MySQL...');
+      setTimeout(() => {
+        saveRelationalState(cleanedState).catch(e => console.error('[MySQL Auto-Repair] Error saving clean state:', e));
+      }, 500);
+    }
+
+    return cleanedState;
   } catch (err) {
     console.error('[MySQL] Error in loadRelationalState:', err);
     return null;
