@@ -26,20 +26,24 @@ async function startServer() {
   if (isProduction) {
     console.log('Running in PRODUCTION mode - Serving static assets from dist...');
     
+    // Redirect subpath requests without trailing slash to ensure relative assets (./assets/...) resolve properly
+    app.get('/MatPlan', (req, res) => res.redirect('/MatPlan/'));
+    app.get('/system-a', (req, res) => res.redirect('/system-a/'));
+
     // Serve static files from both root and subpaths
     app.use('/MatPlan', express.static(distPath));
     app.use('/system-a', express.static(distPath));
     app.use(express.static(distPath));
     
-    app.get(['/MatPlan', '/MatPlan/*'], (req, res) => {
+    // Helper to send index.html with no-cache headers to prevent browser caching old asset hashes
+    const sendIndex = (req: express.Request, res: express.Response) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(path.join(distPath, 'index.html'));
-    });
-    app.get(['/system-a', '/system-a/*'], (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    };
+
+    app.get(['/MatPlan/*', '/system-a/*', '*'], sendIndex);
   } else {
     console.log('Running in DEVELOPMENT mode - Mounting Vite middleware...');
     const vite = await createViteServer({
