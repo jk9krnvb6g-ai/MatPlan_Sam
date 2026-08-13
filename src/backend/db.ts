@@ -128,11 +128,19 @@ if (DB_HOST && DB_USER) {
 async function setupMySQLTables() {
   if (!mysqlPool) return;
   try {
-    // 1. Create system_settings table
+    // 1. Create system_settings & system_state tables
     await mysqlPool.query(`
       CREATE TABLE IF NOT EXISTS system_settings (
         setting_key VARCHAR(255) PRIMARY KEY,
         setting_value LONGTEXT NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS system_state (
+        id INT PRIMARY KEY,
+        state_data LONGTEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
@@ -612,6 +620,17 @@ async function saveRelationalState(state: Partial<DbSchema>) {
         VALUES (?, ?)
         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
       `, [key, val]);
+    }
+
+    // 7. Save JSON state to system_state table as well (for direct viewing in Navicat & backward compatibility)
+    try {
+      await mysqlPool.query(`
+        INSERT INTO system_state (id, state_data)
+        VALUES (1, ?)
+        ON DUPLICATE KEY UPDATE state_data = VALUES(state_data)
+      `, [JSON.stringify(state)]);
+    } catch (e) {
+      console.error('[MySQL] Error updating system_state table:', e);
     }
   } catch (err) {
     console.error('[MySQL] Error in saveRelationalState:', err);
