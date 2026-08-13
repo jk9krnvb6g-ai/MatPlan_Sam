@@ -17,7 +17,8 @@ import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { PrintableReportModal } from './components/PrintableReportModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { ToastAlert } from './components/ToastAlert';
-import { ChevronDown, Clock, Key, LogOut, Type, Sparkles, CheckCircle2, Sun, Moon, Trash2, RotateCcw } from 'lucide-react';
+import { DbStatusModal, DbStatusData } from './components/DbStatusModal';
+import { ChevronDown, Clock, Key, LogOut, Type, Sparkles, CheckCircle2, Sun, Moon, Trash2, RotateCcw, Database, AlertTriangle, Server, HardDrive } from 'lucide-react';
 
 export default function App() {
   // Dark/Light Mode state
@@ -205,6 +206,9 @@ export default function App() {
 
   const isPollingUpdateRef = useRef<boolean>(false);
   const [isLoadingBackend, setIsLoadingBackend] = useState<boolean>(true);
+  const [dbStatus, setDbStatus] = useState<DbStatusData | null>(null);
+  const [showDbStatusModal, setShowDbStatusModal] = useState<boolean>(false);
+
   const apiBase = window.location.pathname.startsWith('/system-a') 
     ? '/system-a/api' 
     : (window.location.pathname.startsWith('/MatPlan') ? '/MatPlan/api' : '/api');
@@ -221,6 +225,9 @@ export default function App() {
           return res.json();
         })
         .then(res => {
+          if (res.dbStatus) {
+            setDbStatus(res.dbStatus);
+          }
           if (res.success && res.data) {
             const d = res.data;
             isPollingUpdateRef.current = true;
@@ -995,12 +1002,52 @@ export default function App() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
-                  Live Sync v1.8
+                  Live Sync v1.10
                 </span>
               </p>
             </div>
           </div>
         </div>
+
+        {/* DB Connection Status Badge Button */}
+        {(() => {
+          const isAdminOrSuperAdmin = currentUser?.role === 'admin' || currentUser?.role === 'superadmin';
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                if (isAdminOrSuperAdmin) {
+                  setShowDbStatusModal(true);
+                } else {
+                  handleToast('เฉพาะผู้ดูแลระบบ (Admin / Super Admin) เท่านั้นที่สามารถดูรายละเอียดและจัดการฐานข้อมูลได้', 'info');
+                }
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border shadow-xs ${
+                isAdminOrSuperAdmin ? 'cursor-pointer' : 'cursor-default opacity-90'
+              } ${
+                dbStatus?.mysql.connected
+                  ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700/60 hover:bg-emerald-900/80 ring-1 ring-emerald-500/20'
+                  : 'bg-amber-950/80 text-amber-300 border-amber-600/80 hover:bg-amber-900 ring-1 ring-amber-500/30 animate-pulse'
+              }`}
+              title={
+                isAdminOrSuperAdmin
+                  ? 'คลิกเพื่อเปิดหน้าตรวจสอบและทดสอบการเชื่อมต่อฐานข้อมูล MySQL & db.json'
+                  : 'สถานะการเชื่อมต่อฐานข้อมูล (เฉพาะผู้ดูแลระบบเท่านั้นที่สามารถเปิดดูรายละเอียดได้)'
+              }
+            >
+              <Database className={`w-4 h-4 shrink-0 ${dbStatus?.mysql.connected ? 'text-emerald-400' : 'text-amber-400'}`} />
+              <div className="hidden sm:flex flex-col items-start text-[10px] leading-tight">
+                <span className="font-bold font-mono">
+                  {dbStatus?.mysql.connected ? 'MySQL: Connected' : 'DB: db.json (Fallback)'}
+                </span>
+                <span className="text-[9px] opacity-80 font-normal">
+                  {dbStatus?.mysql.connected ? dbStatus.mysql.host : 'สลับใช้ db.json สำรอง'}
+                </span>
+              </div>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${dbStatus?.mysql.connected ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`} />
+            </button>
+          );
+        })()}
 
         {/* Senior Accessibility Font Size Selector */}
         <div className="hidden sm:flex items-center gap-1 bg-slate-900/90 border border-slate-800 rounded-lg p-1 text-slate-300">
@@ -1198,6 +1245,33 @@ export default function App() {
           )}
         </div>
       </header>
+
+      {/* Database Disconnection Warning Banner */}
+      {dbStatus && !dbStatus.mysql.connected && (
+        <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-2 flex items-center justify-between text-xs text-amber-950 dark:text-amber-200 shrink-0 shadow-2xs backdrop-blur-xs">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 animate-bounce" />
+            <span className="font-bold shrink-0">แจ้งเตือนสถานะฐานข้อมูล:</span>
+            <span className="truncate text-slate-800 dark:text-amber-200">
+              ไม่สามารถเชื่อมต่อ MySQL ({dbStatus.mysql.host}) ได้ — ระบบสลับมาใช้อ่าน-บันทึกผ่านไฟล์สำรอง <code className="bg-amber-200/60 dark:bg-amber-900/80 px-1.5 py-0.5 rounded font-mono font-bold">db.json</code> โดยอัตโนมัติ (สาเหตุ: {dbStatus.mysql.error || 'Connection Failed'})
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (currentUser?.role === 'admin' || currentUser?.role === 'superadmin') {
+                setShowDbStatusModal(true);
+              } else {
+                handleToast('เฉพาะผู้ดูแลระบบ (Admin / Super Admin) เท่านั้นที่สามารถดูรายละเอียดและจัดการฐานข้อมูลได้', 'info');
+              }
+            }}
+            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] shrink-0 transition-colors ml-2 shadow-xs flex items-center gap-1 cursor-pointer"
+          >
+            <Server className="w-3.5 h-3.5" />
+            ตรวจสอบ / ทดสอบใหม่
+          </button>
+        </div>
+      )}
 
       {/* Horizontal Top Navigation Dock Bar */}
       <Sidebar
@@ -1442,6 +1516,31 @@ export default function App() {
         type={toast.type}
         onClose={() => setToast(prev => ({ ...prev, show: false }))}
       />
+
+      {/* Database Status Modal (Admin & SuperAdmin only) */}
+      {(currentUser?.role === 'admin' || currentUser?.role === 'superadmin') && (
+        <DbStatusModal
+          isOpen={showDbStatusModal}
+          onClose={() => setShowDbStatusModal(false)}
+          status={dbStatus}
+          apiBase={apiBase}
+          onRefresh={() => {
+            fetch(`${apiBase}/db/status`)
+              .then(res => res.json())
+              .then(data => {
+                if (data.success) {
+                  setDbStatus({
+                    mysql: data.mysql,
+                    dbJson: data.dbJson,
+                    activeStorage: data.activeStorage,
+                    lastChecked: data.lastChecked
+                  });
+                }
+              })
+              .catch(console.error);
+          }}
+        />
+      )}
     </div>
   );
 }

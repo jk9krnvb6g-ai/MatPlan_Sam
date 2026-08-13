@@ -6,7 +6,8 @@ import {
   getPaginatedRequests, 
   verifyPassword, 
   hashPasswordSync,
-  setupMySQLTables
+  setupMySQLTables,
+  getDbStatus
 } from './db';
 import { SEED_USERS, seedRequests, INITIAL_WORK_GROUPS, DEPARTMENTS } from '../frontend/data/catalog';
 import { User } from '../frontend/types';
@@ -254,10 +255,11 @@ router.get('/auth/me', authenticateJWT, (req: AuthenticatedRequest, res) => {
 });
 
 // 5. Get current state (Protected)
-router.get('/state', (req, res) => {
+router.get('/state', async (req, res) => {
   try {
     const db = getDb();
-    res.json({ success: true, data: db });
+    const dbStatus = await getDbStatus();
+    res.json({ success: true, data: db, dbStatus });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -360,7 +362,16 @@ router.post('/reset', (req, res) => {
   }
 });
 
-// 9. Manual DB setup & diagnostic endpoint
+// 9. DB status & diagnostic endpoints
+router.get('/db/status', async (req, res) => {
+  try {
+    const status = await getDbStatus();
+    res.json({ success: true, ...status });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
+
 router.all('/db/init', async (req, res) => {
   try {
     const result = await setupMySQLTables();

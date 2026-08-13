@@ -126,6 +126,101 @@ if (DB_HOST && DB_USER) {
 }
 
 // Setup MySQL tables and load state
+// Export DB Status interface & status checker
+export interface DbStatusResponse {
+  mysql: {
+    configured: boolean;
+    connected: boolean;
+    host: string;
+    database: string;
+    error: string | null;
+  };
+  dbJson: {
+    exists: boolean;
+    readable: boolean;
+    writable: boolean;
+    path: string;
+    error: string | null;
+  };
+  activeStorage: 'mysql' | 'db.json' | 'none';
+  lastChecked: string;
+}
+
+export async function getDbStatus(): Promise<DbStatusResponse> {
+  let mysqlConnected = false;
+  let mysqlErr: string | null = null;
+
+  if (mysqlPool) {
+    try {
+      await mysqlPool.query('SELECT 1');
+      mysqlConnected = true;
+    } catch (err: any) {
+      mysqlErr = err.message || String(err);
+      if (err.code === 'ECONNREFUSED') {
+        mysqlErr = `ไม่สามารถเชื่อมต่อเครื่อง ${DB_HOST}:${DB_PORT} ได้ (Connection Refused)`;
+      } else if (err.code === 'ETIMEDOUT') {
+        mysqlErr = `หมดเวลาการเชื่อมต่อ (Timeout) ไปยังเครื่อง ${DB_HOST}:${DB_PORT}`;
+      } else if (err.code === 'ER_ACCESS_DENIED_ERROR') {
+        mysqlErr = `รหัสผ่านหรือสิทธิ์ผู้ใช้ ${DB_USER} ไม่ถูกต้อง`;
+      }
+    }
+  } else {
+    mysqlErr = 'ยังไม่ได้ระบุ DB_HOST หรือ DB_USER ในไฟล์ .env';
+  }
+
+  let jsonExists = false;
+  let jsonReadable = false;
+  let jsonWritable = false;
+  let jsonErr: string | null = null;
+
+  try {
+    if (fs.existsSync(DB_FILE_PATH)) {
+      jsonExists = true;
+      fs.readFileSync(DB_FILE_PATH, 'utf-8');
+      jsonReadable = true;
+      fs.accessSync(DB_FILE_PATH, fs.constants.W_OK);
+      jsonWritable = true;
+    } else {
+      const dir = path.dirname(DB_FILE_PATH);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(DB_FILE_PATH, '{}', 'utf-8');
+      jsonExists = true;
+      jsonReadable = true;
+      jsonWritable = true;
+    }
+  } catch (err: any) {
+    jsonErr = err.message || String(err);
+  }
+
+  let activeStorage: 'mysql' | 'db.json' | 'none' = 'none';
+  if (mysqlConnected) {
+    activeStorage = 'mysql';
+  } else if (jsonReadable && jsonWritable) {
+    activeStorage = 'db.json';
+  }
+
+  return {
+    mysql: {
+      configured: Boolean(DB_HOST && DB_USER),
+      connected: mysqlConnected,
+      host: DB_HOST ? `${DB_HOST}:${DB_PORT}` : 'ไม่ระบุ',
+      database: DB_NAME || 'MatPlan',
+      error: mysqlErr
+    },
+    dbJson: {
+      exists: jsonExists,
+      readable: jsonReadable,
+      writable: jsonWritable,
+      path: DB_FILE_PATH,
+      error: jsonErr
+    },
+    activeStorage,
+    lastChecked: new Date().toISOString()
+  };
+}
+
 export async function setupMySQLTables(): Promise<{ success: boolean; message?: string; error?: string }> {
   if (!mysqlPool) {
     return { success: false, error: 'MySQL connection pool is not initialized. Please check DB_HOST and DB_USER in .env file.' };
