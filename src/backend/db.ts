@@ -125,8 +125,11 @@ if (DB_HOST && DB_USER) {
   console.log('[MySQL] DB_HOST or DB_USER not set. Using local file-based db.json storage.');
 }
 
-async function setupMySQLTables() {
-  if (!mysqlPool) return;
+// Setup MySQL tables and load state
+export async function setupMySQLTables(): Promise<{ success: boolean; message?: string; error?: string }> {
+  if (!mysqlPool) {
+    return { success: false, error: 'MySQL connection pool is not initialized. Please check DB_HOST and DB_USER in .env file.' };
+  }
   try {
     // 1. Create system_settings & system_state tables
     await mysqlPool.query(`
@@ -188,9 +191,9 @@ async function setupMySQLTables() {
         dept_id VARCHAR(255) NOT NULL,
         item_name VARCHAR(255) NOT NULL,
         unit VARCHAR(100) NOT NULL,
-        qty_last_year INT NOT NULL,
-        qty_requested INT NOT NULL,
-        status VARCHAR(100) NOT NULL,
+        qty_last_year INT NOT NULL DEFAULT 0,
+        qty_requested INT NOT NULL DEFAULT 0,
+        status VARCHAR(100) NOT NULL DEFAULT 'draft',
         comment TEXT,
         reason TEXT,
         unit_price DECIMAL(15,2),
@@ -276,8 +279,10 @@ async function setupMySQLTables() {
         "INSERT INTO system_settings (setting_key, setting_value) VALUES ('migrated_to_relational', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true'"
       );
     }
-  } catch (err) {
+    return { success: true, message: 'MySQL tables and default data setup completed successfully!' };
+  } catch (err: any) {
     console.error('[MySQL] Failed to setup MySQL database tables:', err);
+    return { success: false, error: err.message || String(err) };
   }
 }
 
@@ -535,22 +540,22 @@ async function saveRelationalState(state: Partial<DbSchema>) {
             rejected_at = VALUES(rejected_at)
         `, [
           r.id,
-          r.deptId,
-          r.itemName,
-          r.unit,
-          r.qtyLastYear,
-          r.qtyRequested,
-          r.status,
+          r.deptId || 'office',
+          r.itemName || 'รายการ',
+          r.unit || 'ชิ้น',
+          r.qtyLastYear !== undefined && r.qtyLastYear !== null ? Number(r.qtyLastYear) : 0,
+          r.qtyRequested !== undefined && r.qtyRequested !== null ? Number(r.qtyRequested) : 0,
+          r.status || 'draft',
           r.comment || '',
           r.reason || '',
-          r.unitPrice !== null ? Number(r.unitPrice) : null,
+          r.unitPrice !== undefined && r.unitPrice !== null && !isNaN(Number(r.unitPrice)) ? Number(r.unitPrice) : null,
           r.fiscalYear || null,
           r.createdAt || null,
           r.updatedAt || null,
           r.requesterName || null,
           r.requesterSubDept || null,
-          r.qtyOriginal !== undefined ? Number(r.qtyOriginal) : null,
-          r.qtyAdjusted !== undefined ? Number(r.qtyAdjusted) : null,
+          r.qtyOriginal !== undefined && r.qtyOriginal !== null ? Number(r.qtyOriginal) : null,
+          r.qtyAdjusted !== undefined && r.qtyAdjusted !== null ? Number(r.qtyAdjusted) : null,
           r.adjustedByRole || null,
           r.adjustedByName || null,
           r.adjustedAt || null,

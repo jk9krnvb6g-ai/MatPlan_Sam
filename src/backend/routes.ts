@@ -5,7 +5,8 @@ import {
   saveDb, 
   getPaginatedRequests, 
   verifyPassword, 
-  hashPasswordSync 
+  hashPasswordSync,
+  setupMySQLTables
 } from './db';
 import { SEED_USERS, seedRequests, INITIAL_WORK_GROUPS, DEPARTMENTS } from '../frontend/data/catalog';
 import { User } from '../frontend/types';
@@ -356,6 +357,26 @@ router.post('/reset', (req, res) => {
     res.json({ success: true, data: seedData });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 9. Manual DB setup & diagnostic endpoint
+router.all('/db/init', async (req, res) => {
+  try {
+    const result = await setupMySQLTables();
+    res.json({
+      timestamp: new Date().toISOString(),
+      dbHost: process.env.DB_HOST || 'Not Configured',
+      dbPort: process.env.DB_PORT || '3306',
+      dbUser: process.env.DB_USER || 'Not Configured',
+      dbName: process.env.DB_NAME || 'MatPlan',
+      ...result
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err.message || String(err)
+    });
   }
 });
 
