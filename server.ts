@@ -26,11 +26,11 @@ async function startServer() {
   if (isProduction) {
     console.log('Running in PRODUCTION mode - Serving static assets from dist...');
     
-    // Redirect subpath requests without trailing slash to ensure relative assets (./assets/...) resolve properly
-    app.get('/MatPlan', (req, res) => res.redirect('/MatPlan/'));
-    app.get('/system-a', (req, res) => res.redirect('/system-a/'));
+    // 1. Redirect subpath requests without trailing slash to ensure relative assets (./assets/...) resolve properly
+    app.get('/MatPlan', (req, res) => res.redirect(301, '/MatPlan/'));
+    app.get('/system-a', (req, res) => res.redirect(301, '/system-a/'));
 
-    // Serve static files from both root and subpaths
+    // 2. Serve static files from both root and subpaths
     app.use('/MatPlan', express.static(distPath));
     app.use('/system-a', express.static(distPath));
     app.use(express.static(distPath));
