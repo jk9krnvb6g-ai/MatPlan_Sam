@@ -995,7 +995,7 @@ export default function App() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
-                  Live Sync v1.5
+                  Live Sync v1.6
                 </span>
               </p>
             </div>

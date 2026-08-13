@@ -250,6 +250,17 @@ async function setupMySQLTables() {
     if (loadedState) {
       dbCache = loadedState;
       console.log('[MySQL] Successfully loaded state from relational tables!');
+      // Dual-Sync: Sync local db.json with MySQL state on startup
+      try {
+        const dir = path.dirname(DB_FILE_PATH);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(DB_FILE_PATH, JSON.stringify(dbCache, null, 2), 'utf-8');
+        console.log('[Dual-Sync] Local db.json updated with latest MySQL database state.');
+      } catch (e) {
+        console.error('[Dual-Sync] Error updating db.json from MySQL state:', e);
+      }
     } else {
       console.log('[MySQL] No relational state found. Seeding default state to relational tables...');
       await saveRelationalState(dbCache);
