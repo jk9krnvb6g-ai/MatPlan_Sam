@@ -30,7 +30,13 @@ async function startServer() {
     app.get('/MatPlan', (req, res) => res.redirect(301, '/MatPlan/'));
     app.get('/system-a', (req, res) => res.redirect(301, '/system-a/'));
 
-    // 2. Serve static files from both root and subpaths
+    // 2. Explicitly serve /assets, /MatPlan/assets, /system-a/assets to prevent HTML fallback on asset 404
+    const assetsPath = path.join(distPath, 'assets');
+    app.use('/assets', express.static(assetsPath));
+    app.use('/MatPlan/assets', express.static(assetsPath));
+    app.use('/system-a/assets', express.static(assetsPath));
+
+    // 3. Serve all other static files from dist
     app.use('/MatPlan', express.static(distPath));
     app.use('/system-a', express.static(distPath));
     app.use(express.static(distPath));
