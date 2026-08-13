@@ -36,7 +36,14 @@ export const DbStatusModal: React.FC<DbStatusModalProps> = ({
   apiBase
 }) => {
   const [isRetrying, setIsRetrying] = useState(false);
-  const [retryResult, setRetryResult] = useState<{ success?: boolean; message?: string; error?: string } | null>(null);
+  const [retryResult, setRetryResult] = useState<{ 
+    success?: boolean; 
+    message?: string; 
+    error?: string;
+    database?: string;
+    totalTables?: number;
+    tables?: { table: string; rows: number }[];
+  } | null>(null);
 
   if (!isOpen) return null;
 
@@ -196,11 +203,29 @@ export const DbStatusModal: React.FC<DbStatusModalProps> = ({
 
           {/* Test connection result if retried */}
           {retryResult && (
-            <div className={`p-3 rounded-xl text-xs border ${retryResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
+            <div className={`p-3.5 rounded-xl text-xs border ${retryResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-rose-50 border-rose-200 text-rose-800'}`}>
               <span className="font-bold block text-sm mb-1">
-                {retryResult.success ? '✓ ทดสอบเชื่อมต่อและสร้างตารางสำเร็จ!' : '✕ ทดสอบเชื่อมต่อล้มเหลว'}
+                {retryResult.success ? '✓ ทดสอบเชื่อมต่อและตรวจสอบตารางสำเร็จ!' : '✕ ทดสอบเชื่อมต่อล้มเหลว'}
               </span>
-              <p>{retryResult.message || retryResult.error}</p>
+              <p className="mb-2">{retryResult.message || retryResult.error}</p>
+
+              {retryResult.success && retryResult.tables && retryResult.tables.length > 0 && (
+                <div className="mt-2 bg-white rounded-lg border border-emerald-200 p-2.5 space-y-1.5">
+                  <span className="font-bold text-[11px] text-emerald-900 block border-b border-emerald-100 pb-1">
+                    รายชื่อตารางในฐานข้อมูล `{retryResult.database}` (รวม {retryResult.totalTables} ตาราง):
+                  </span>
+                  <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
+                    {retryResult.tables.map(t => (
+                      <div key={t.table} className="flex items-center justify-between bg-emerald-50/50 px-2 py-1 rounded border border-emerald-100/60">
+                        <span className="text-emerald-950 font-semibold">{t.table}</span>
+                        <span className="text-emerald-700 text-[10px] bg-emerald-100 px-1.5 py-0.2 rounded font-sans font-bold">
+                          {t.rows} แถว
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

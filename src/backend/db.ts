@@ -111,6 +111,7 @@ if (DB_HOST && DB_USER) {
     user: DB_USER,
     password: DB_PASSWORD,
     database: DB_NAME,
+    charset: 'utf8mb4',
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
@@ -221,11 +222,24 @@ export async function getDbStatus(): Promise<DbStatusResponse> {
   };
 }
 
-export async function setupMySQLTables(): Promise<{ success: boolean; message?: string; error?: string }> {
+export async function setupMySQLTables(): Promise<{ 
+  success: boolean; 
+  message?: string; 
+  error?: string;
+  database?: string;
+  totalTables?: number;
+  tables?: { table: string; rows: number }[];
+}> {
   if (!mysqlPool) {
     return { success: false, error: 'MySQL connection pool is not initialized. Please check DB_HOST and DB_USER in .env file.' };
   }
   try {
+    // Ensure connection uses utf8mb4
+    await mysqlPool.query('SET NAMES utf8mb4');
+    try {
+      await mysqlPool.query(`ALTER DATABASE \`${DB_NAME}\` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci`);
+    } catch (e) {}
+
     // 1. Create system_settings & system_state tables
     await mysqlPool.query(`
       CREATE TABLE IF NOT EXISTS system_settings (
@@ -320,6 +334,14 @@ export async function setupMySQLTables(): Promise<{ success: boolean; message?: 
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    // Ensure all tables are explicitly converted to utf8mb4_unicode_ci
+    const tablesToConvert = ['system_settings', 'system_state', 'work_groups', 'departments', 'users', 'requests', 'system_logs'];
+    for (const t of tablesToConvert) {
+      try {
+        await mysqlPool.query(`ALTER TABLE \`${t}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      } catch (e) {}
+    }
+
     let sourceState: DbSchema | null = null;
 
     // Check if we need to migrate from old system_state table
@@ -353,9 +375,11 @@ export async function setupMySQLTables(): Promise<{ success: boolean; message?: 
 
     // Now load current state from relational tables
     const loadedState = await loadRelationalState();
-    if (loadedState) {
+    const hasMojibake = loadedState && JSON.stringify(loadedState).includes('เธ');
+
+    if (loadedState && !hasMojibake) {
       dbCache = loadedState;
-      console.log('[MySQL] Successfully loaded state from relational tables!');
+      console.log('[MySQL] Successfully loaded clean state from relational tables!');
       // Dual-Sync: Sync local db.json with MySQL state on startup
       try {
         const dir = path.dirname(DB_FILE_PATH);
@@ -368,13 +392,51 @@ export async function setupMySQLTables(): Promise<{ success: boolean; message?: 
         console.error('[Dual-Sync] Error updating db.json from MySQL state:', e);
       }
     } else {
-      console.log('[MySQL] No relational state found. Seeding default state to relational tables...');
+      console.log('[MySQL] Mojibake or empty state detected. Re-syncing clean UTF-8 state to relational tables...');
+      // Read clean state from db.json if available
+      if (fs.existsSync(DB_FILE_PATH)) {
+        try {
+          const fileRaw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
+          const fileState = JSON.parse(fileRaw);
+          if (fileState && fileState.users && fileState.users.length > 0 && !fileRaw.includes('เธ')) {
+            dbCache = fileState;
+          }
+        } catch (e) {}
+      }
       await saveRelationalState(dbCache);
       await mysqlPool.query(
         "INSERT INTO system_settings (setting_key, setting_value) VALUES ('migrated_to_relational', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true'"
       );
     }
-    return { success: true, message: 'MySQL tables and default data setup completed successfully!' };
+
+    // Query exact table list and row counts from MySQL information_schema
+    const [tableRows]: any = await mysqlPool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = ?
+    `, [DB_NAME]);
+
+    const tableSummary: { table: string; rows: number }[] = [];
+    if (Array.isArray(tableRows)) {
+      for (const row of tableRows) {
+        const tableName = row.TABLE_NAME || row.table_name;
+        try {
+          const [countResult]: any = await mysqlPool.query(`SELECT COUNT(*) as total FROM \`${tableName}\``);
+          const count = countResult && countResult[0] ? Number(countResult[0].total) : 0;
+          tableSummary.push({ table: tableName, rows: count });
+        } catch (e) {
+          tableSummary.push({ table: tableName, rows: 0 });
+        }
+      }
+    }
+
+    return { 
+      success: true, 
+      message: `MySQL database '${DB_NAME}' tables and default data setup completed successfully!`,
+      database: DB_NAME,
+      totalTables: tableSummary.length,
+      tables: tableSummary
+    };
   } catch (err: any) {
     console.error('[MySQL] Failed to setup MySQL database tables:', err);
     return { success: false, error: err.message || String(err) };
