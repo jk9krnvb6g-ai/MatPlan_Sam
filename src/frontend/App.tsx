@@ -211,36 +211,51 @@ export default function App() {
 
   // Sync state from server on mount
   useEffect(() => {
-    fetch(`${apiBase}/state`)
-      .then(async res => {
-        const contentType = res.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-          throw new Error(`Expected JSON but got ${contentType}`);
-        }
-        return res.json();
-      })
-      .then(res => {
-        if (res.success && res.data) {
-          const d = res.data;
-          if (d.workGroups) setWorkGroups(d.workGroups);
-          if (d.departments) setDepartments(d.departments);
-          if (d.users) setUsers(d.users);
-          if (d.requests) setRequests(d.requests);
-          if (d.customItems) setCustomItems(d.customItems);
-          if (d.itemPrices) setItemPrices(d.itemPrices);
-          if (d.materialActive) setMaterialActive(d.materialActive);
-          if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
-          if (d.fiscalYear) setFiscalYear(d.fiscalYear);
-          if (d.isCatalogCleared !== undefined) setIsCatalogCleared(d.isCatalogCleared);
-          if (d.logs) setLogs(d.logs);
-        }
-      })
-      .catch(err => {
-        console.error('Error fetching backend state, falling back to localStorage:', err);
-      })
-      .finally(() => {
-        setIsLoadingBackend(false);
-      });
+    const fetchLatestState = () => {
+      fetch(`${apiBase}/state`)
+        .then(async res => {
+          const contentType = res.headers.get('content-type');
+          if (!contentType || !contentType.includes('application/json')) {
+            throw new Error(`Expected JSON but got ${contentType}`);
+          }
+          return res.json();
+        })
+        .then(res => {
+          if (res.success && res.data) {
+            const d = res.data;
+            isPollingUpdateRef.current = true;
+            if (d.workGroups) setWorkGroups(d.workGroups);
+            if (d.departments) setDepartments(d.departments);
+            if (d.users) setUsers(d.users);
+            if (d.requests) setRequests(d.requests);
+            if (d.customItems) setCustomItems(d.customItems);
+            if (d.itemPrices) setItemPrices(d.itemPrices);
+            if (d.materialActive) setMaterialActive(d.materialActive);
+            if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
+            if (d.fiscalYear) setFiscalYear(d.fiscalYear);
+            if (d.isCatalogCleared !== undefined) setIsCatalogCleared(d.isCatalogCleared);
+            if (d.logs) setLogs(d.logs);
+          }
+        })
+        .catch(err => {
+          console.error('Error fetching backend state, falling back to localStorage:', err);
+        })
+        .finally(() => {
+          setIsLoadingBackend(false);
+        });
+    };
+
+    fetchLatestState();
+
+    // Auto-refresh state every 5 seconds and when browser tab regains focus
+    const interval = setInterval(fetchLatestState, 5000);
+    const handleFocus = () => fetchLatestState();
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, [apiBase]);
 
   // Sync state to local storage and backend

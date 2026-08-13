@@ -1,6 +1,6 @@
-# คู่มือการอัปเดตระบบจัดซื้อวัสดุพัสดุ - เวอร์ชัน 1.0 (System Update Guide v1.0)
+# คู่มือการอัปเดตระบบจัดซื้อวัสดุพัสดุ - เวอร์ชัน 1.4 (System Update Guide v1.4)
 
-เอกสารฉบับนี้สรุปขั้นตอนการอัปเดตระบบจากเวอร์ชันเดิม ขึ้นสู่ **เวอร์ชัน 1.0 (Version 1.0)** ที่มีการเพิ่มระบบ **JWT Authentication**, **Server-side Pagination (Live MySQL Explorer)** และ **Server-Sent Events (SSE Real-time Notification)** โดยไม่ต้องทำลายหรือสูญเสียข้อมูลเดิมในฐานข้อมูล
+เอกสารฉบับนี้สรุปขั้นตอนการอัปเดตระบบขึ้นสู่ **เวอร์ชัน 1.4 (Version 1.4)** ที่มีการปรับปรุงระบบ **Real-time Cross-Device Auto Sync** ป้องกันการบันทึกข้อมูลทับจากเบราว์เซอร์อื่น และการรีเฟรชข้อมูลอัตโนมัติ 5 วินาที / เมื่อสลับแท็บกลับมาใช้งาน
 
 ---
 
@@ -210,6 +210,38 @@ JWT_SECRET=MatPlan_SecretKey_2026_SecureKey_ChangeThis
 
 * **ปัญหา: โหลดหน้าเว็บแล้วขึ้น 404 หรือหน้าจอขาว**
   * *การแก้ไข:* รัน `npm run build` อีกครั้ง และตรวจสอบให้แน่ใจว่าได้ทำการลบ PM2 ตัวเดิมด้วย `pm2 delete` แล้วสั่งเริ่มต้นใหม่ด้วย `pm2 start dist/server.cjs --name MatPlan` เพื่อให้ทำงานจากโค้ดตัวใหม่ล่าสุดจริง ๆ
+
+* **ปัญหา: ลืมรหัสผ่านผู้ดูแลระบบ (Admin Password Reset)**
+  * *สาเหตุ:* มีการเปลี่ยนรหัสผ่านผู้ดูแลระบบ `admin` แล้วจำรหัสผ่านไม่ได้
+  * *การแก้ไข (เลือกวิธีใดวิธีหนึ่ง):*
+    * **วิธีที่ 1: รันคำสั่ง SQL ใน MySQLโดยตรง**
+      เปิดโปรแกรม MySQL (เช่น phpMyAdmin, MySQL Workbench หรือ SSH ใน MySQL Server 10.2.0.201) แล้วรันคำสั่ง:
+      ```sql
+      UPDATE users SET password = '1234' WHERE username = 'admin';
+      ```
+      *(รหัสผ่าน admin จะถูกรีเซ็ตกลับเป็น `1234` ทันที)*
+
+    * **วิธีที่ 2: รันคำสั่ง Node.js รีเซ็ตผ่าน Terminal (SSH) ในเครื่อง App Server**
+      ต้องย้ายเข้าไปยังโฟลเดอร์โครงการ `/var/www/html/MatPlan` ก่อนรันคำสั่ง:
+      ```bash
+      cd /var/www/html/MatPlan && node -e "
+      const mysql = require('mysql2/promise');
+      require('dotenv').config();
+      async function reset() {
+        const conn = await mysql.createConnection({
+          host: process.env.DB_HOST || '10.2.0.201',
+          port: Number(process.env.DB_PORT) || 3306,
+          user: process.env.DB_USER || 'MatPlan',
+          password: process.env.DB_PASS || process.env.DB_PASSWORD,
+          database: process.env.DB_NAME || 'MatPlan'
+        });
+        await conn.query('UPDATE users SET password = ? WHERE username = ?', ['1234', 'admin']);
+        console.log('✅ รีเซ็ตรหัสผ่าน admin เป็น 1234 สำเร็จ!');
+        await conn.end();
+      }
+      reset().catch(console.error);
+      "
+      ```
 
 * **การ Rollback กลับเวอร์ชันเดิม (กรณีจำเป็นฉุกเฉิน)**
   1. คืนค่าฐานข้อมูลเดิม: `mysql -u root -p MatPlan < backup_matplan_before_update.sql`
