@@ -345,23 +345,42 @@ export async function setupMySQLTables(): Promise<{
       } catch (e) {}
     }
 
-    // Load clean master state from local db.json
+    // Load clean master state from local db.json or fallback to catalog seed defaults
     let cleanMasterState: DbSchema | null = null;
     if (fs.existsSync(DB_FILE_PATH)) {
       try {
         const fileRaw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
         if (!fileRaw.includes('เธ') && !fileRaw.includes('\uFFFD')) {
-          cleanMasterState = JSON.parse(fileRaw);
+          const parsed = JSON.parse(fileRaw);
+          if (parsed && Array.isArray(parsed.users) && parsed.users.length > 0 && Array.isArray(parsed.departments) && parsed.departments.length > 0) {
+            cleanMasterState = parsed;
+          }
         }
       } catch (e) {}
     }
 
+    if (!cleanMasterState) {
+      cleanMasterState = {
+        requests: seedRequests(),
+        users: SEED_USERS.map(u => ({ ...u, password: hashPasswordSync(u.password) })),
+        departments: DEPARTMENTS,
+        workGroups: INITIAL_WORK_GROUPS,
+        customItems: {},
+        itemPrices: {},
+        materialActive: {},
+        isPlanFrozen: false,
+        fiscalYear: '2569',
+        logs: []
+      };
+    }
+
     const loadedState = await loadRelationalState();
     const loadedStr = loadedState ? JSON.stringify(loadedState) : '';
-    const isCorrupt = !loadedState || loadedStr.includes('เธ') || loadedStr.includes('\uFFFD') || loadedStr.includes('') || loadedStr.includes('ายบริหาร');
+    const isCorrupt = !loadedState || loadedStr.includes('เธ') || loadedStr.includes('\uFFFD') || loadedStr.includes('ายบริหาร');
+    const isEmpty = !loadedState || !loadedState.users || loadedState.users.length === 0 || !loadedState.departments || loadedState.departments.length === 0;
 
-    if (isCorrupt && cleanMasterState) {
-      console.log('[MySQL] Clearing corrupt database rows and populating clean Thai UTF-8 data from db.json...');
+    if (isCorrupt || isEmpty) {
+      console.log('[MySQL] Clearing database and populating clean Thai UTF-8 seed data...');
       try {
         await mysqlPool.query('TRUNCATE TABLE work_groups');
         await mysqlPool.query('TRUNCATE TABLE departments');
@@ -385,6 +404,13 @@ export async function setupMySQLTables(): Promise<{
       await mysqlPool.query(
         "INSERT INTO system_settings (setting_key, setting_value) VALUES ('migrated_to_relational', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true'"
       );
+      try {
+        const dir = path.dirname(DB_FILE_PATH);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(DB_FILE_PATH, JSON.stringify(dbCache, null, 2), 'utf-8');
+      } catch (e) {}
       console.log('[MySQL] Successfully populated clean Thai UTF-8 state to relational tables!');
     } else if (loadedState) {
       dbCache = loadedState;
