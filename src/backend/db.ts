@@ -153,7 +153,11 @@ export async function getDbStatus(): Promise<DbStatusResponse> {
 
   if (mysqlPool) {
     try {
-      await mysqlPool.query('SELECT 1');
+      const pingPromise = mysqlPool.query('SELECT 1');
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Connection check timeout (2s)')), 2000)
+      );
+      await Promise.race([pingPromise, timeoutPromise]);
       mysqlConnected = true;
     } catch (err: any) {
       mysqlErr = err.message || String(err);
@@ -236,8 +240,9 @@ export async function setupMySQLTables(): Promise<{
   try {
     // Ensure connection uses utf8mb4
     await mysqlPool.query('SET NAMES utf8mb4');
+    // Ensure database uses tis620/tis620_thai_ci as set in Navicat or utf8mb4
     try {
-      await mysqlPool.query(`ALTER DATABASE \`${DB_NAME}\` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci`);
+      await mysqlPool.query(`ALTER DATABASE \`${DB_NAME}\` CHARACTER SET = tis620 COLLATE = tis620_thai_ci`);
     } catch (e) {}
 
     // 1. Create system_settings & system_state tables
@@ -245,7 +250,7 @@ export async function setupMySQLTables(): Promise<{
       CREATE TABLE IF NOT EXISTS system_settings (
         setting_key VARCHAR(255) PRIMARY KEY,
         setting_value LONGTEXT NOT NULL
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
     `);
 
     await mysqlPool.query(`
@@ -253,7 +258,7 @@ export async function setupMySQLTables(): Promise<{
         id INT PRIMARY KEY,
         state_data LONGTEXT NOT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
     `);
 
     // Check if migration is already done
@@ -269,7 +274,7 @@ export async function setupMySQLTables(): Promise<{
         name VARCHAR(255) NOT NULL,
         description TEXT,
         code VARCHAR(255)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
     `);
 
     await mysqlPool.query(`
@@ -278,7 +283,7 @@ export async function setupMySQLTables(): Promise<{
         name VARCHAR(255) NOT NULL,
         category VARCHAR(255) NOT NULL,
         work_group_id VARCHAR(255)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
     `);
 
     await mysqlPool.query(`
@@ -291,7 +296,7 @@ export async function setupMySQLTables(): Promise<{
         category VARCHAR(255),
         dept_id VARCHAR(255) NOT NULL,
         status VARCHAR(50) NOT NULL
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
     `);
 
     await mysqlPool.query(`
@@ -319,7 +324,7 @@ export async function setupMySQLTables(): Promise<{
         rejected_by_role VARCHAR(100),
         rejected_by_name VARCHAR(255),
         rejected_at VARCHAR(100)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
     `);
 
     await mysqlPool.query(`
@@ -331,82 +336,59 @@ export async function setupMySQLTables(): Promise<{
         action_type VARCHAR(100) NOT NULL,
         module VARCHAR(100) NOT NULL,
         description TEXT NOT NULL
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
     `);
 
-    // Ensure all tables are explicitly converted to utf8mb4_unicode_ci
+    // Convert tables to tis620_thai_ci matching MatPlan settings
     const tablesToConvert = ['system_settings', 'system_state', 'work_groups', 'departments', 'users', 'requests', 'system_logs'];
     for (const t of tablesToConvert) {
       try {
-        await mysqlPool.query(`ALTER TABLE \`${t}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+        await mysqlPool.query(`ALTER TABLE \`${t}\` CONVERT TO CHARACTER SET tis620 COLLATE tis620_thai_ci`);
       } catch (e) {}
     }
 
-    let sourceState: DbSchema | null = null;
-
-    // Check if we need to migrate from old system_state table
-    if (!alreadyMigrated) {
+    // Load clean master state from local db.json
+    let cleanMasterState: DbSchema | null = null;
+    if (fs.existsSync(DB_FILE_PATH)) {
       try {
-        const [tableCheck]: any = await mysqlPool.query(`
-          SELECT COUNT(*) as cnt FROM information_schema.tables 
-          WHERE table_schema = ? AND table_name = 'system_state'
-        `, [DB_NAME]);
-        
-        if (tableCheck && tableCheck[0] && tableCheck[0].cnt > 0) {
-          const [rows]: any = await mysqlPool.query('SELECT state_data FROM system_state WHERE id = 1');
-          if (rows && rows.length > 0) {
-            console.log('[MySQL Migration] Found legacy system_state data. Migrating to relational tables...');
-            sourceState = JSON.parse(rows[0].state_data);
-          }
+        const fileRaw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
+        if (!fileRaw.includes('เธ')) {
+          cleanMasterState = JSON.parse(fileRaw);
         }
-      } catch (err) {
-        console.log('[MySQL Migration] No legacy system_state table found or query failed. Skipping migration.');
-      }
+      } catch (e) {}
     }
 
-    if (sourceState) {
-      // Migrate legacy state to relational tables
-      await saveRelationalState(sourceState);
+    const loadedState = await loadRelationalState();
+    const hasMojibake = loadedState && JSON.stringify(loadedState).includes('เธ');
+
+    if ((hasMojibake || !loadedState) && cleanMasterState) {
+      console.log('[MySQL] Clearing corrupt database rows and populating clean Thai data from db.json...');
+      try {
+        await mysqlPool.query('DELETE FROM work_groups');
+        await mysqlPool.query('DELETE FROM departments');
+        await mysqlPool.query('DELETE FROM users');
+        await mysqlPool.query('DELETE FROM requests');
+        await mysqlPool.query('DELETE FROM system_logs');
+        await mysqlPool.query('DELETE FROM system_settings');
+      } catch (e) {}
+
+      dbCache = cleanMasterState;
+      await saveRelationalState(cleanMasterState);
       await mysqlPool.query(
         "INSERT INTO system_settings (setting_key, setting_value) VALUES ('migrated_to_relational', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true'"
       );
-      console.log('[MySQL Migration] Legacy state successfully migrated to relational tables!');
-    }
-
-    // Now load current state from relational tables
-    const loadedState = await loadRelationalState();
-    if (loadedState) {
+      console.log('[MySQL] Successfully populated clean Thai state to relational tables!');
+    } else if (loadedState) {
       dbCache = loadedState;
-      // Force save clean state back to MySQL so all tables get clean UTF-8 rows
       await saveRelationalState(dbCache);
-      console.log('[MySQL] Successfully loaded and re-saved clean state into relational tables!');
-      // Dual-Sync: Sync local db.json with MySQL state on startup
+      console.log('[MySQL] Successfully loaded clean state from relational tables!');
       try {
         const dir = path.dirname(DB_FILE_PATH);
         if (!fs.existsSync(dir)) {
           fs.mkdirSync(dir, { recursive: true });
         }
         fs.writeFileSync(DB_FILE_PATH, JSON.stringify(dbCache, null, 2), 'utf-8');
-        console.log('[Dual-Sync] Local db.json updated with latest MySQL database state.');
-      } catch (e) {
-        console.error('[Dual-Sync] Error updating db.json from MySQL state:', e);
-      }
-    } else {
-      console.log('[MySQL] Empty state detected. Seeding clean UTF-8 state to relational tables...');
-      // Read clean state from db.json if available
-      if (fs.existsSync(DB_FILE_PATH)) {
-        try {
-          const fileRaw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
-          const fileState = JSON.parse(fileRaw);
-          if (fileState && fileState.users && fileState.users.length > 0 && !fileRaw.includes('เธ')) {
-            dbCache = fileState;
-          }
-        } catch (e) {}
-      }
-      await saveRelationalState(dbCache);
-      await mysqlPool.query(
-        "INSERT INTO system_settings (setting_key, setting_value) VALUES ('migrated_to_relational', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true'"
-      );
+      } catch (e) {}
     }
 
     // Query exact table list and row counts from MySQL information_schema
@@ -448,9 +430,24 @@ function fixMojibake(str: string | null | undefined): string {
   if (!str || typeof str !== 'string') return str || '';
   if (!str.includes('เธ') && !str.includes('เธน') && !str.includes('เน') && !str.includes('เธฃ')) return str;
   try {
-    const fixed = Buffer.from(str, 'latin1').toString('utf-8');
-    if (/[\u0E00-\u0E7F]/.test(fixed)) {
+    const bytes: number[] = [];
+    for (let i = 0; i < str.length; i++) {
+      const code = str.charCodeAt(i);
+      if (code >= 0x0E00 && code <= 0x0E7F) {
+        bytes.push(code - 0x0E00 + 0xA0);
+      } else {
+        bytes.push(code & 0xFF);
+      }
+    }
+    const fixed = Buffer.from(bytes).toString('utf-8');
+    if (/[\u0E00-\u0E7F]/.test(fixed) && !fixed.includes('เธ')) {
       return fixed;
+    }
+  } catch (e) {}
+  try {
+    const fixedLatin = Buffer.from(str, 'latin1').toString('utf-8');
+    if (/[\u0E00-\u0E7F]/.test(fixedLatin)) {
+      return fixedLatin;
     }
   } catch (e) {}
   return str;
@@ -458,8 +455,9 @@ function fixMojibake(str: string | null | undefined): string {
 
 async function loadRelationalState(): Promise<DbSchema | null> {
   if (!mysqlPool) return null;
-  const conn = await mysqlPool.getConnection();
+  let conn: mysql.PoolConnection | null = null;
   try {
+    conn = await mysqlPool.getConnection();
     await conn.query('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
     await conn.query('SET CHARACTER SET utf8mb4');
     await conn.query('SET character_set_connection=utf8mb4');
@@ -643,14 +641,15 @@ async function loadRelationalState(): Promise<DbSchema | null> {
     console.error('[MySQL] Error in loadRelationalState:', err);
     return null;
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 }
 
 async function saveRelationalState(state: Partial<DbSchema>) {
   if (!mysqlPool) return;
-  const conn = await mysqlPool.getConnection();
+  let conn: mysql.PoolConnection | null = null;
   try {
+    conn = await mysqlPool.getConnection();
     await conn.query('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
     await conn.query('SET CHARACTER SET utf8mb4');
     await conn.query('SET character_set_connection=utf8mb4');
@@ -872,7 +871,7 @@ async function saveRelationalState(state: Partial<DbSchema>) {
   } catch (err) {
     console.error('[MySQL] Error in saveRelationalState:', err);
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 }
 

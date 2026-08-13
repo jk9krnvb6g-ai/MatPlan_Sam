@@ -215,41 +215,54 @@ export default function App() {
 
   // Sync state from server on mount
   useEffect(() => {
-    const fetchLatestState = () => {
-      fetch(`${apiBase}/state`)
-        .then(async res => {
-          const contentType = res.headers.get('content-type');
-          if (!contentType || !contentType.includes('application/json')) {
-            throw new Error(`Expected JSON but got ${contentType}`);
-          }
-          return res.json();
-        })
-        .then(res => {
-          if (res.dbStatus) {
-            setDbStatus(res.dbStatus);
-          }
-          if (res.success && res.data) {
-            const d = res.data;
-            isPollingUpdateRef.current = true;
-            if (d.workGroups) setWorkGroups(d.workGroups);
-            if (d.departments) setDepartments(d.departments);
-            if (d.users) setUsers(d.users);
-            if (d.requests) setRequests(d.requests);
-            if (d.customItems) setCustomItems(d.customItems);
-            if (d.itemPrices) setItemPrices(d.itemPrices);
-            if (d.materialActive) setMaterialActive(d.materialActive);
-            if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
-            if (d.fiscalYear) setFiscalYear(d.fiscalYear);
-            if (d.isCatalogCleared !== undefined) setIsCatalogCleared(d.isCatalogCleared);
-            if (d.logs) setLogs(d.logs);
-          }
-        })
-        .catch(err => {
-          console.error('Error fetching backend state, falling back to localStorage:', err);
-        })
-        .finally(() => {
+    const fetchLatestState = async () => {
+      let res: Response | null = null;
+      try {
+        res = await fetch(`${apiBase}/state`);
+        if (!res || !res.ok) {
+          res = await fetch('/api/state');
+        }
+      } catch (e) {
+        try {
+          res = await fetch('/api/state');
+        } catch (err2) {}
+      }
+
+      if (!res || !res.ok) {
+        setIsLoadingBackend(false);
+        return;
+      }
+
+      try {
+        const contentType = res.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
           setIsLoadingBackend(false);
-        });
+          return;
+        }
+        const json = await res.json();
+        if (json.dbStatus) {
+          setDbStatus(json.dbStatus);
+        }
+        if (json.success && json.data) {
+          const d = json.data;
+          isPollingUpdateRef.current = true;
+          if (d.workGroups) setWorkGroups(d.workGroups);
+          if (d.departments) setDepartments(d.departments);
+          if (d.users) setUsers(d.users);
+          if (d.requests) setRequests(d.requests);
+          if (d.customItems) setCustomItems(d.customItems);
+          if (d.itemPrices) setItemPrices(d.itemPrices);
+          if (d.materialActive) setMaterialActive(d.materialActive);
+          if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
+          if (d.fiscalYear) setFiscalYear(d.fiscalYear);
+          if (d.isCatalogCleared !== undefined) setIsCatalogCleared(d.isCatalogCleared);
+          if (d.logs) setLogs(d.logs);
+        }
+      } catch (err) {
+        console.warn('Backend state response handling fallback:', err);
+      } finally {
+        setIsLoadingBackend(false);
+      }
     };
 
     fetchLatestState();
