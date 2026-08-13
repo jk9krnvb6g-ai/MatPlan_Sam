@@ -26,17 +26,13 @@ async function startServer() {
   if (isProduction) {
     console.log('Running in PRODUCTION mode - Serving static assets from dist...');
     
-    // 1. Redirect subpath requests without trailing slash to ensure relative assets (./assets/...) resolve properly
-    app.get('/MatPlan', (req, res) => res.redirect(301, '/MatPlan/'));
-    app.get('/system-a', (req, res) => res.redirect(301, '/system-a/'));
-
-    // 2. Explicitly serve /assets, /MatPlan/assets, /system-a/assets to prevent HTML fallback on asset 404
+    // 1. Static asset serving for all base path variations
     const assetsPath = path.join(distPath, 'assets');
-    app.use('/assets', express.static(assetsPath));
     app.use('/MatPlan/assets', express.static(assetsPath));
     app.use('/system-a/assets', express.static(assetsPath));
+    app.use('/assets', express.static(assetsPath));
 
-    // 3. Serve all other static files from dist
+    // 2. Serve static files from dist root
     app.use('/MatPlan', express.static(distPath));
     app.use('/system-a', express.static(distPath));
     app.use(express.static(distPath));
@@ -49,7 +45,7 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     };
 
-    app.get(['/MatPlan/*', '/system-a/*', '*'], sendIndex);
+    app.get('*', sendIndex);
   } else {
     console.log('Running in DEVELOPMENT mode - Mounting Vite middleware...');
     const vite = await createViteServer({
