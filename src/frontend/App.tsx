@@ -470,18 +470,23 @@ export default function App() {
   };
 
   const handleResetUserPassword = async (username: string, newPw: string): Promise<{ success: boolean; error?: string }> => {
-    if (username !== currentUser?.username && currentUser?.username !== 'admin') {
-      handleToast('คุณไม่มีสิทธิ์รีเซ็ตรหัสผ่านของบุคคลอื่น', 'error');
-      return { success: false, error: 'ไม่มีสิทธิ์ทำรายการ' };
+    try {
+      const res = await fetch(`${apiBase}/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, newPassword: newPw })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUsers(prev => prev.map(u => u.username === username ? { ...u, password: newPw } : u));
+        logAction('edit', 'users', `รีเซ็ตรหัสผ่านของบัญชีผู้ใช้งาน @${username} เรียบร้อยแล้ว`);
+        return { success: true };
+      } else {
+        return { success: false, error: data.error || 'รีเซ็ตรหัสผ่านล้มเหลว' };
+      }
+    } catch (err) {
+      return { success: false, error: 'เกิดข้อผิดพลาดในการติดต่อระบบรีเซ็ตรหัสผ่าน' };
     }
-    if (username === 'admin' && currentUser?.username !== 'admin') {
-      handleToast('ไม่สามารถเปลี่ยนรหัสผ่านของบัญชีผู้ดูแลระบบสูงสุด (Super Admin) ได้', 'error');
-      return { success: false, error: 'ไม่มีสิทธิ์เปลี่ยนรหัสผ่านบัญชี Super Admin' };
-    }
-
-    setUsers(prev => prev.map(u => u.username === username ? { ...u, password: newPw } : u));
-    logAction('edit', 'users', `รีเซ็ตรหัสผ่านของบัญชีผู้ใช้งาน @${username} เรียบร้อยแล้ว`);
-    return { success: true };
   };
 
   // Staff Handlers

@@ -415,7 +415,12 @@ export function getRequesterFor(deptId: string, idx: number): { name: string; su
 }
 
 export const SEED_USERS: User[] = [
-  { username: 'admin', password: '1234', role: 'admin', roles: ['admin', 'staff', 'head', 'proc', 'prochead', 'exec'], name: 'ผู้ดูแลระบบ (Admin)', category: 'office', deptId: 'admin', status: 'active' }
+  { username: 'admin', password: '1234', role: 'admin', roles: ['admin', 'staff', 'head', 'proc', 'prochead', 'exec'], name: 'ผู้ดูแลระบบ (Admin)', category: 'office', deptId: 'admin', status: 'active' },
+  { username: 'staff', password: '1234', role: 'staff', roles: ['staff'], name: 'เจ้าหน้าที่ผู้ขอ (Staff)', category: 'office', deptId: 'thurakan', status: 'active' },
+  { username: 'head', password: '1234', role: 'head', roles: ['head'], name: 'หัวหน้ากลุ่มงาน/ฝ่าย', category: 'office', deptId: 'thurakan', status: 'active' },
+  { username: 'proc', password: '1234', role: 'proc', roles: ['proc'], name: 'เจ้าหน้าที่พัสดุ', category: 'office', deptId: 'phasadu', status: 'active' },
+  { username: 'prochead', password: '1234', role: 'prochead', roles: ['prochead'], name: 'หัวหน้าฝ่ายพัสดุ', category: 'office', deptId: 'phasadu', status: 'active' },
+  { username: 'exec', password: '1234', role: 'exec', roles: ['exec'], name: 'ผู้บริหาร (Executive)', category: 'office', deptId: 'admin', status: 'active' }
 ];
 
 let reqCounter = 1;

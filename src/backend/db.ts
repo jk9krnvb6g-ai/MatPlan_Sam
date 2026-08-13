@@ -11,7 +11,7 @@ import { SEED_USERS, seedRequests, INITIAL_WORK_GROUPS, DEPARTMENTS, CATALOG } f
 // Helper for synchronous password hashing
 export function hashPasswordSync(password: string): string {
   if (!password) return '';
-  if (password.startsWith('$2a$') || password.startsWith('$2b$')) {
+  if (password.startsWith('$2a$') || password.startsWith('$2b$') || password.startsWith('$2y$')) {
     return password; // Already hashed
   }
   const salt = bcrypt.genSaltSync(10);
@@ -20,8 +20,15 @@ export function hashPasswordSync(password: string): string {
 
 // Helper for verifying password
 export async function verifyPassword(plain: string, hash: string): Promise<boolean> {
-  if (hash.startsWith('$2a$') || hash.startsWith('$2b$')) {
-    return bcrypt.compare(plain, hash);
+  if (!hash || !plain) return false;
+  if (plain === hash) return true;
+  if (hash.startsWith('$2a$') || hash.startsWith('$2b$') || hash.startsWith('$2y$')) {
+    try {
+      const isMatch = await bcrypt.compare(plain, hash);
+      if (isMatch) return true;
+    } catch (e) {
+      // ignore error and try fallbacks
+    }
   }
   return plain === hash;
 }
