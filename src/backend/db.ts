@@ -238,11 +238,10 @@ export async function setupMySQLTables(): Promise<{
     return { success: false, error: 'MySQL connection pool is not initialized. Please check DB_HOST and DB_USER in .env file.' };
   }
   try {
-    // Ensure connection uses utf8mb4
-    await mysqlPool.query('SET NAMES utf8mb4');
-    // Ensure database uses tis620/tis620_thai_ci as set in Navicat or utf8mb4
+    // Ensure connection and database use utf8mb4_unicode_ci
+    await mysqlPool.query('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
     try {
-      await mysqlPool.query(`ALTER DATABASE \`${DB_NAME}\` CHARACTER SET = tis620 COLLATE = tis620_thai_ci`);
+      await mysqlPool.query(`ALTER DATABASE \`${DB_NAME}\` CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci`);
     } catch (e) {}
 
     // 1. Create system_settings & system_state tables
@@ -250,7 +249,7 @@ export async function setupMySQLTables(): Promise<{
       CREATE TABLE IF NOT EXISTS system_settings (
         setting_key VARCHAR(255) PRIMARY KEY,
         setting_value LONGTEXT NOT NULL
-      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     await mysqlPool.query(`
@@ -258,14 +257,13 @@ export async function setupMySQLTables(): Promise<{
         id INT PRIMARY KEY,
         state_data LONGTEXT NOT NULL,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     // Check if migration is already done
     const [settingRows]: any = await mysqlPool.query(
       "SELECT setting_value FROM system_settings WHERE setting_key = 'migrated_to_relational'"
     );
-    const alreadyMigrated = settingRows && settingRows.length > 0 && settingRows[0].setting_value === 'true';
 
     // 2. Create other relational tables
     await mysqlPool.query(`
@@ -274,7 +272,7 @@ export async function setupMySQLTables(): Promise<{
         name VARCHAR(255) NOT NULL,
         description TEXT,
         code VARCHAR(255)
-      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     await mysqlPool.query(`
@@ -283,7 +281,7 @@ export async function setupMySQLTables(): Promise<{
         name VARCHAR(255) NOT NULL,
         category VARCHAR(255) NOT NULL,
         work_group_id VARCHAR(255)
-      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     await mysqlPool.query(`
@@ -296,7 +294,7 @@ export async function setupMySQLTables(): Promise<{
         category VARCHAR(255),
         dept_id VARCHAR(255) NOT NULL,
         status VARCHAR(50) NOT NULL
-      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     await mysqlPool.query(`
@@ -324,7 +322,7 @@ export async function setupMySQLTables(): Promise<{
         rejected_by_role VARCHAR(100),
         rejected_by_name VARCHAR(255),
         rejected_at VARCHAR(100)
-      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     await mysqlPool.query(`
@@ -336,14 +334,14 @@ export async function setupMySQLTables(): Promise<{
         action_type VARCHAR(100) NOT NULL,
         module VARCHAR(100) NOT NULL,
         description TEXT NOT NULL
-      ) ENGINE=InnoDB DEFAULT CHARSET=tis620 COLLATE=tis620_thai_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    // Convert tables to tis620_thai_ci matching MatPlan settings
+    // Ensure all tables are utf8mb4_unicode_ci
     const tablesToConvert = ['system_settings', 'system_state', 'work_groups', 'departments', 'users', 'requests', 'system_logs'];
     for (const t of tablesToConvert) {
       try {
-        await mysqlPool.query(`ALTER TABLE \`${t}\` CONVERT TO CHARACTER SET tis620 COLLATE tis620_thai_ci`);
+        await mysqlPool.query(`ALTER TABLE \`${t}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
       } catch (e) {}
     }
 
@@ -352,32 +350,42 @@ export async function setupMySQLTables(): Promise<{
     if (fs.existsSync(DB_FILE_PATH)) {
       try {
         const fileRaw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
-        if (!fileRaw.includes('เธ')) {
+        if (!fileRaw.includes('เธ') && !fileRaw.includes('\uFFFD')) {
           cleanMasterState = JSON.parse(fileRaw);
         }
       } catch (e) {}
     }
 
     const loadedState = await loadRelationalState();
-    const hasMojibake = loadedState && JSON.stringify(loadedState).includes('เธ');
+    const loadedStr = loadedState ? JSON.stringify(loadedState) : '';
+    const isCorrupt = !loadedState || loadedStr.includes('เธ') || loadedStr.includes('\uFFFD') || loadedStr.includes('') || loadedStr.includes('ายบริหาร');
 
-    if ((hasMojibake || !loadedState) && cleanMasterState) {
-      console.log('[MySQL] Clearing corrupt database rows and populating clean Thai data from db.json...');
+    if (isCorrupt && cleanMasterState) {
+      console.log('[MySQL] Clearing corrupt database rows and populating clean Thai UTF-8 data from db.json...');
       try {
-        await mysqlPool.query('DELETE FROM work_groups');
-        await mysqlPool.query('DELETE FROM departments');
-        await mysqlPool.query('DELETE FROM users');
-        await mysqlPool.query('DELETE FROM requests');
-        await mysqlPool.query('DELETE FROM system_logs');
-        await mysqlPool.query('DELETE FROM system_settings');
-      } catch (e) {}
+        await mysqlPool.query('TRUNCATE TABLE work_groups');
+        await mysqlPool.query('TRUNCATE TABLE departments');
+        await mysqlPool.query('TRUNCATE TABLE users');
+        await mysqlPool.query('TRUNCATE TABLE requests');
+        await mysqlPool.query('TRUNCATE TABLE system_logs');
+        await mysqlPool.query('TRUNCATE TABLE system_settings');
+      } catch (e) {
+        try {
+          await mysqlPool.query('DELETE FROM work_groups');
+          await mysqlPool.query('DELETE FROM departments');
+          await mysqlPool.query('DELETE FROM users');
+          await mysqlPool.query('DELETE FROM requests');
+          await mysqlPool.query('DELETE FROM system_logs');
+          await mysqlPool.query('DELETE FROM system_settings');
+        } catch (e2) {}
+      }
 
       dbCache = cleanMasterState;
       await saveRelationalState(cleanMasterState);
       await mysqlPool.query(
         "INSERT INTO system_settings (setting_key, setting_value) VALUES ('migrated_to_relational', 'true') ON DUPLICATE KEY UPDATE setting_value = 'true'"
       );
-      console.log('[MySQL] Successfully populated clean Thai state to relational tables!');
+      console.log('[MySQL] Successfully populated clean Thai UTF-8 state to relational tables!');
     } else if (loadedState) {
       dbCache = loadedState;
       await saveRelationalState(dbCache);
