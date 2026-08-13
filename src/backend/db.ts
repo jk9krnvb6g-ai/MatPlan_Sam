@@ -375,11 +375,11 @@ export async function setupMySQLTables(): Promise<{
 
     // Now load current state from relational tables
     const loadedState = await loadRelationalState();
-    const hasMojibake = loadedState && JSON.stringify(loadedState).includes('เธ');
-
-    if (loadedState && !hasMojibake) {
+    if (loadedState) {
       dbCache = loadedState;
-      console.log('[MySQL] Successfully loaded clean state from relational tables!');
+      // Force save clean state back to MySQL so all tables get clean UTF-8 rows
+      await saveRelationalState(dbCache);
+      console.log('[MySQL] Successfully loaded and re-saved clean state into relational tables!');
       // Dual-Sync: Sync local db.json with MySQL state on startup
       try {
         const dir = path.dirname(DB_FILE_PATH);
@@ -392,7 +392,7 @@ export async function setupMySQLTables(): Promise<{
         console.error('[Dual-Sync] Error updating db.json from MySQL state:', e);
       }
     } else {
-      console.log('[MySQL] Mojibake or empty state detected. Re-syncing clean UTF-8 state to relational tables...');
+      console.log('[MySQL] Empty state detected. Seeding clean UTF-8 state to relational tables...');
       // Read clean state from db.json if available
       if (fs.existsSync(DB_FILE_PATH)) {
         try {
@@ -458,9 +458,16 @@ function fixMojibake(str: string | null | undefined): string {
 
 async function loadRelationalState(): Promise<DbSchema | null> {
   if (!mysqlPool) return null;
+  const conn = await mysqlPool.getConnection();
   try {
+    await conn.query('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
+    await conn.query('SET CHARACTER SET utf8mb4');
+    await conn.query('SET character_set_connection=utf8mb4');
+    await conn.query('SET character_set_results=utf8mb4');
+    await conn.query('SET character_set_client=utf8mb4');
+
     // Check if any work_groups exist. If nothing exists, return null so it seeds.
-    const [wgRows]: any = await mysqlPool.query('SELECT * FROM work_groups');
+    const [wgRows]: any = await conn.query('SELECT * FROM work_groups');
     if (!wgRows || wgRows.length === 0) {
       return null;
     }
@@ -480,7 +487,7 @@ async function loadRelationalState(): Promise<DbSchema | null> {
     });
 
     // Load departments
-    const [deptRows]: any = await mysqlPool.query('SELECT * FROM departments');
+    const [deptRows]: any = await conn.query('SELECT * FROM departments');
     const departments: Department[] = deptRows.map((row: any) => {
       const fixedName = fixMojibake(row.name);
       if (fixedName !== row.name) hadMojibake = true;
@@ -493,7 +500,7 @@ async function loadRelationalState(): Promise<DbSchema | null> {
     });
 
     // Load users
-    const [userRows]: any = await mysqlPool.query('SELECT * FROM users');
+    const [userRows]: any = await conn.query('SELECT * FROM users');
     const users: User[] = userRows.map((row: any) => {
       let extraRoles: string[] = [];
       try {
@@ -516,7 +523,7 @@ async function loadRelationalState(): Promise<DbSchema | null> {
     });
 
     // Load requests
-    const [reqRows]: any = await mysqlPool.query('SELECT * FROM requests');
+    const [reqRows]: any = await conn.query('SELECT * FROM requests');
     const requests: RequestItem[] = reqRows.map((row: any) => {
       const fixedItemName = fixMojibake(row.item_name);
       const fixedUnit = fixMojibake(row.unit);
@@ -562,7 +569,7 @@ async function loadRelationalState(): Promise<DbSchema | null> {
     });
 
     // Load logs
-    const [logRows]: any = await mysqlPool.query('SELECT * FROM system_logs');
+    const [logRows]: any = await conn.query('SELECT * FROM system_logs');
     const logs: LogEntry[] = logRows.map((row: any) => {
       const fixedName = fixMojibake(row.name);
       const fixedDesc = fixMojibake(row.description);
@@ -579,7 +586,7 @@ async function loadRelationalState(): Promise<DbSchema | null> {
     });
 
     // Load settings
-    const [settingRows]: any = await mysqlPool.query('SELECT * FROM system_settings');
+    const [settingRows]: any = await conn.query('SELECT * FROM system_settings');
     const settingsMap: Record<string, string> = {};
     for (const r of settingRows) {
       settingsMap[r.setting_key] = r.setting_value;
@@ -628,29 +635,38 @@ async function loadRelationalState(): Promise<DbSchema | null> {
       console.log('[MySQL Auto-Repair] Mojibake text detected in database rows. Auto-saving clean UTF-8 text back to MySQL...');
       setTimeout(() => {
         saveRelationalState(cleanedState).catch(e => console.error('[MySQL Auto-Repair] Error saving clean state:', e));
-      }, 500);
+      }, 100);
     }
 
     return cleanedState;
   } catch (err) {
     console.error('[MySQL] Error in loadRelationalState:', err);
     return null;
+  } finally {
+    conn.release();
   }
 }
 
 async function saveRelationalState(state: Partial<DbSchema>) {
   if (!mysqlPool) return;
+  const conn = await mysqlPool.getConnection();
   try {
+    await conn.query('SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci');
+    await conn.query('SET CHARACTER SET utf8mb4');
+    await conn.query('SET character_set_connection=utf8mb4');
+    await conn.query('SET character_set_results=utf8mb4');
+    await conn.query('SET character_set_client=utf8mb4');
+
     // 1. Save workGroups if provided
     if (state.workGroups) {
       const ids = state.workGroups.map(w => w.id);
       if (ids.length > 0) {
-        await mysqlPool.query('DELETE FROM work_groups WHERE id NOT IN (?)', [ids]);
+        await conn.query('DELETE FROM work_groups WHERE id NOT IN (?)', [ids]);
       } else {
-        await mysqlPool.query('DELETE FROM work_groups');
+        await conn.query('DELETE FROM work_groups');
       }
       for (const w of state.workGroups) {
-        await mysqlPool.query(`
+        await conn.query(`
           INSERT INTO work_groups (id, name, description, code)
           VALUES (?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
@@ -665,12 +681,12 @@ async function saveRelationalState(state: Partial<DbSchema>) {
     if (state.departments) {
       const ids = state.departments.map(d => d.id);
       if (ids.length > 0) {
-        await mysqlPool.query('DELETE FROM departments WHERE id NOT IN (?)', [ids]);
+        await conn.query('DELETE FROM departments WHERE id NOT IN (?)', [ids]);
       } else {
-        await mysqlPool.query('DELETE FROM departments');
+        await conn.query('DELETE FROM departments');
       }
       for (const d of state.departments) {
-        await mysqlPool.query(`
+        await conn.query(`
           INSERT INTO departments (id, name, category, work_group_id)
           VALUES (?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
@@ -685,12 +701,12 @@ async function saveRelationalState(state: Partial<DbSchema>) {
     if (state.users) {
       const usernames = state.users.map(u => u.username);
       if (usernames.length > 0) {
-        await mysqlPool.query('DELETE FROM users WHERE username NOT IN (?)', [usernames]);
+        await conn.query('DELETE FROM users WHERE username NOT IN (?)', [usernames]);
       } else {
-        await mysqlPool.query('DELETE FROM users');
+        await conn.query('DELETE FROM users');
       }
       for (const u of state.users) {
-        await mysqlPool.query(`
+        await conn.query(`
           INSERT INTO users (username, password, role, roles, name, category, dept_id, status)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
@@ -718,12 +734,12 @@ async function saveRelationalState(state: Partial<DbSchema>) {
     if (state.requests) {
       const ids = state.requests.map(r => r.id);
       if (ids.length > 0) {
-        await mysqlPool.query('DELETE FROM requests WHERE id NOT IN (?)', [ids]);
+        await conn.query('DELETE FROM requests WHERE id NOT IN (?)', [ids]);
       } else {
-        await mysqlPool.query('DELETE FROM requests');
+        await conn.query('DELETE FROM requests');
       }
       for (const r of state.requests) {
-        await mysqlPool.query(`
+        await conn.query(`
           INSERT INTO requests (
             id, dept_id, item_name, unit, qty_last_year, qty_requested, status, comment, reason, unit_price, fiscal_year,
             created_at, updated_at, requester_name, requester_sub_dept, qty_original, qty_adjusted, adjusted_by_role,
@@ -785,12 +801,12 @@ async function saveRelationalState(state: Partial<DbSchema>) {
     if (state.logs) {
       const ids = state.logs.map(l => l.id);
       if (ids.length > 0) {
-        await mysqlPool.query('DELETE FROM system_logs WHERE id NOT IN (?)', [ids]);
+        await conn.query('DELETE FROM system_logs WHERE id NOT IN (?)', [ids]);
       } else {
-        await mysqlPool.query('DELETE FROM system_logs');
+        await conn.query('DELETE FROM system_logs');
       }
       for (const l of state.logs) {
-        await mysqlPool.query(`
+        await conn.query(`
           INSERT INTO system_logs (id, timestamp, username, name, action_type, module, description)
           VALUES (?, ?, ?, ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
@@ -835,7 +851,7 @@ async function saveRelationalState(state: Partial<DbSchema>) {
     }
 
     for (const [key, val] of Object.entries(settingsToSave)) {
-      await mysqlPool.query(`
+      await conn.query(`
         INSERT INTO system_settings (setting_key, setting_value)
         VALUES (?, ?)
         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
@@ -844,7 +860,7 @@ async function saveRelationalState(state: Partial<DbSchema>) {
 
     // 7. Save JSON state to system_state table as well (for direct viewing in Navicat & backward compatibility)
     try {
-      await mysqlPool.query(`
+      await conn.query(`
         INSERT INTO system_state (id, state_data)
         VALUES (1, ?)
         ON DUPLICATE KEY UPDATE state_data = VALUES(state_data)
@@ -852,8 +868,11 @@ async function saveRelationalState(state: Partial<DbSchema>) {
     } catch (e) {
       console.error('[MySQL] Error updating system_state table:', e);
     }
+    console.log('[MySQL] Relational state saved successfully with UTF-8 encoding!');
   } catch (err) {
     console.error('[MySQL] Error in saveRelationalState:', err);
+  } finally {
+    conn.release();
   }
 }
 
