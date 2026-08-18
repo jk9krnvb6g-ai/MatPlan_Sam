@@ -1,19 +1,23 @@
 import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
-import { CategoryId, RequestItem, User } from '../types';
+import { CategoryId, RequestItem, User, Department, WorkGroup, DepartmentRevisionPermission } from '../types';
 import { CategoryBadge } from './CategoryBadge';
 import { ALL_ITEMS, CATALOG, CATEGORY_LABELS, CATEGORY_ORDER, deptName, fmtBaht, getItemCategory, guessPrice, getItemPriceForYear, guessUnit, DEPARTMENTS } from '../data/catalog';
 import { CompareGrid } from './CompareGrid';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
 import { sortItems } from '../utils/sortHelper';
-import { Info, Send, Layers, BarChart3, Calculator, ArrowUpDown, Calendar, TrendingUp, XCircle, RotateCcw, Download, Search, AlertCircle, CheckCircle2, CheckCheck, Crown, Clock, Filter, UserCheck, PackageCheck, ShieldCheck, Database } from 'lucide-react';
+import { Info, Send, Layers, BarChart3, Calculator, ArrowUpDown, Calendar, TrendingUp, XCircle, RotateCcw, Download, Search, AlertCircle, CheckCircle2, CheckCheck, Crown, Clock, Filter, UserCheck, PackageCheck, ShieldCheck, Database, FileEdit, Unlock, Lock, Sparkles, History, PlusCircle } from 'lucide-react';
 
 interface ProcurementViewProps {
   currentUser: User;
   requests: RequestItem[];
   itemPrices: Record<string, number>;
   fiscalYear: string;
+  departments?: Department[];
+  workGroups?: WorkGroup[];
+  revisionPermissions?: Record<string, DepartmentRevisionPermission>;
+  onUnlockRevision?: (deptId: string, isUnlocked: boolean, note?: string, expiresAt?: string) => void;
   onUpdateUnitPrice: (itemName: string, price: number) => void;
   onUpdateQty: (requestId: string, newQty: number) => void;
   onSubmitToProcHead: (specificIds?: string[]) => void;
@@ -28,6 +32,10 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
   requests,
   itemPrices,
   fiscalYear,
+  departments = DEPARTMENTS,
+  workGroups = [],
+  revisionPermissions = {},
+  onUnlockRevision,
   onUpdateUnitPrice,
   onUpdateQty,
   onSubmitToProcHead,
@@ -36,11 +44,16 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
   onRequestConfirm,
   onToastAlert
 }) => {
-  const [activeTab, setActiveTab] = useState<'pending' | 'compare' | 'price-history' | 'approved-summary' | 'rejected' | 'sql-pagination'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'compare' | 'price-history' | 'approved-summary' | 'rejected' | 'revisions' | 'sql-pagination'>('pending');
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'itemName' | 'totalQty' | 'price' | 'lineBudget'>('itemName');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Revision tab specific states
+  const [revisionDeptSearch, setRevisionDeptSearch] = useState('');
+  const [revisionNoteInputs, setRevisionNoteInputs] = useState<Record<string, string>>({});
+  const [revisionExpiryInputs, setRevisionExpiryInputs] = useState<Record<string, string>>({});
 
   const [pageSize, setPageSize] = useState<number | 'all'>(10);
   const [currentPage, setCurrentPage] = useState(1);
@@ -360,6 +373,21 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
         >
           <TrendingUp className="w-4 h-4 text-emerald-600" />
           สืบค้นราคาย้อนหลัง 5 ปี
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('revisions');
+            setCurrentPage(1);
+          }}
+          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
+            activeTab === 'revisions'
+              ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <FileEdit className="w-4 h-4 text-amber-950" />
+          จัดการคำขอปรับปรุงแผน (Revision Requests)
         </button>
         <button
           type="button"
@@ -1739,6 +1767,311 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* REVISION REQUESTS TAB (จัดการคำขอปรับปรุงแผนระหว่างปี) */}
+      {activeTab === 'revisions' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Header Card */}
+          <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-3xl p-6 shadow-sm">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100/80 text-amber-900 text-xs font-bold border border-amber-200">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-700" />
+                  ระบบเปิดสิทธิ์ปรับปรุงแผนงบประมาณรอบ 6 เดือน (Mid-Year Budget Revision)
+                </div>
+                <h2 className="text-lg md:text-xl font-bold text-slate-900">
+                  จัดการสิทธิ์และตรวจสอบรายการขอปรับปรุงแผนงบประมาณ
+                </h2>
+                <p className="text-xs md:text-sm text-slate-600 max-w-3xl leading-relaxed">
+                  เจ้าหน้าที่พัสดุสามารถ <strong className="text-amber-800">"เปิดสิทธิ์ให้แต่ละฝ่าย/แผนก"</strong> เพื่อให้สามารถปรับปรุง เพิ่ม ลด หรือขอยกเลิกรายการที่เคยได้รับอนุมัติไปแล้ว พร้อมกำหนดระยะเวลาและบันทึกเหตุผล
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 bg-white px-4 py-3 rounded-2xl border border-amber-200 shadow-xs">
+                <Unlock className="w-5 h-5 text-emerald-600" />
+                <div className="text-xs">
+                  <div className="text-slate-500 font-medium">ฝ่ายที่เปิดสิทธิ์ปรับแผนขณะนี้</div>
+                  <div className="text-base font-bold text-emerald-700">
+                    {departments.filter(d => revisionPermissions[d.id]?.isUnlocked).length} / {departments.length} ฝ่าย
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 1: Department Revision Permission Controller */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-50 text-indigo-700 rounded-xl">
+                  <Unlock className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm md:text-base">
+                    1. ควบคุมการเปิด-ปิดสิทธิ์การปรับปรุงแผนรายฝ่าย (Department Unlock Control)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    เมื่อเปิดสิทธิ์ ฝ่ายดังกล่าวจะสามารถกดปุ่ม "ขอปรับปรุงแผนงบประมาณ" ในหน้าจอของตนเองได้
+                  </p>
+                </div>
+              </div>
+
+              <div className="w-full sm:w-64">
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={revisionDeptSearch}
+                    onChange={e => setRevisionDeptSearch(e.target.value)}
+                    placeholder="ค้นหาชื่อฝ่าย/กลุ่มงาน..."
+                    className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                    <th className="p-3 w-12 text-center">ลำดับ</th>
+                    <th className="p-3">ชื่อฝ่าย / แผนก</th>
+                    <th className="p-3">กลุ่มงานที่สังกัด</th>
+                    <th className="p-3 text-center">สถานะสิทธิ์ปัจจุบัน</th>
+                    <th className="p-3">หมายเหตุ / กำหนดระยะเวลา</th>
+                    <th className="p-3 text-right w-44">การดำเนินการ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {departments
+                    .filter(d => {
+                      if (!revisionDeptSearch.trim()) return true;
+                      const q = revisionDeptSearch.toLowerCase().trim();
+                      const wg = workGroups.find(w => w.id === d.workGroupId);
+                      return d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q) || (wg && wg.name.toLowerCase().includes(q));
+                    })
+                    .map((dept, idx) => {
+                      const perm = revisionPermissions[dept.id] || { deptId: dept.id, isUnlocked: false };
+                      const isUnlocked = perm.isUnlocked;
+                      const wg = workGroups.find(w => w.id === dept.workGroupId);
+                      const currentNote = revisionNoteInputs[dept.id] ?? perm.note ?? '';
+
+                      return (
+                        <tr key={dept.id} className={isUnlocked ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50/60'}>
+                          <td className="p-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                          <td className="p-3 font-bold text-slate-900">
+                            <div>{dept.name}</div>
+                            <span className="text-[10px] text-slate-400 font-mono font-normal">รหัส: {dept.id}</span>
+                          </td>
+                          <td className="p-3 text-slate-600">
+                            {wg ? wg.name : 'ส่วนกลาง'}
+                          </td>
+                          <td className="p-3 text-center">
+                            {isUnlocked ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold border border-emerald-200">
+                                <Unlock className="w-3 h-3 text-emerald-700" />
+                                เปิดสิทธิ์ปรับแผน
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-[11px] font-medium border border-slate-200">
+                                <Lock className="w-3 h-3 text-slate-400" />
+                                ล็อค (ไม่อนุญาต)
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            {isUnlocked ? (
+                              <div className="space-y-1">
+                                <div className="text-slate-800 font-medium text-xs">{perm.note || 'ไม่มีหมายเหตุระบุ'}</div>
+                                {perm.unlockedAt && (
+                                  <div className="text-[10px] text-slate-400">
+                                    เปิดเมื่อ: {new Date(perm.unlockedAt).toLocaleString('th-TH')} โดย {perm.unlockedBy || 'เจ้าหน้าที่พัสดุ'}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 max-w-sm">
+                                <input
+                                  type="text"
+                                  placeholder="ระบุเหตุผล/หมายเหตุเปิดสิทธิ์ เช่น ปรับรอบ 6 เดือน..."
+                                  value={currentNote}
+                                  onChange={e => setRevisionNoteInputs(prev => ({ ...prev, [dept.id]: e.target.value }))}
+                                  className="w-full px-2.5 py-1 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                />
+                              </div>
+                            )}
+                          </td>
+                          <td className="p-3 text-right">
+                            {isUnlocked ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onRequestConfirm({
+                                    title: `ยืนยันการปิดสิทธิ์ปรับแผนของ ${dept.name}`,
+                                    message: `คุณต้องการปิดสิทธิ์การแก้ไข/ปรับปรุงแผนงบประมาณของ "${dept.name}" ใช่หรือไม่?`,
+                                    confirmText: 'ปิดสิทธิ์ทันที',
+                                    variant: 'warning',
+                                    onConfirm: () => {
+                                      if (onUnlockRevision) {
+                                        onUnlockRevision(dept.id, false);
+                                        onToastAlert(`ปิดสิทธิ์การปรับแผนของฝ่าย ${dept.name} เรียบร้อยแล้ว`, 'info');
+                                      }
+                                    }
+                                  });
+                                }}
+                                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                              >
+                                <Lock className="w-3.5 h-3.5" />
+                                ปิดสิทธิ์
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onRequestConfirm({
+                                    title: `ยืนยันการเปิดสิทธิ์ปรับแผนให้ ${dept.name}`,
+                                    message: `คุณต้องการเปิดสิทธิ์ให้ "${dept.name}" สามารถส่งคำขอปรับปรุง/เพิ่ม/ลดยอดงบประมาณรอบ 6 เดือนได้ ใช่หรือไม่?`,
+                                    confirmText: 'เปิดสิทธิ์ทันที',
+                                    variant: 'primary',
+                                    onConfirm: () => {
+                                      if (onUnlockRevision) {
+                                        onUnlockRevision(dept.id, true, currentNote);
+                                        onToastAlert(`เปิดสิทธิ์ให้ฝ่าย ${dept.name} ปรับปรุงแผนเรียบร้อยแล้ว`, 'success');
+                                      }
+                                    }
+                                  });
+                                }}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                              >
+                                <Unlock className="w-3.5 h-3.5" />
+                                เปิดสิทธิ์ให้ฝ่ายนี้
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Section 2: Submitted Mid-Year Revision Requests Review */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-50 text-amber-700 rounded-xl">
+                  <FileEdit className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm md:text-base">
+                    2. รายการคำขอปรับปรุงแผนงบประมาณที่ส่งเข้ามา (Submitted Revision Items)
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    รายการที่หน่วยงานขอปรับเปลี่ยนยอด ขอยกเลิก หรือขอเพิ่มรายการใหม่กลางปี เพื่อเสนอให้พัสดุและผู้บริหารพิจารณา
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {requests.filter(r => r.isRevisionItem).length === 0 ? (
+              <div className="p-12 text-center bg-slate-50 border border-slate-200 rounded-2xl text-slate-500 space-y-2">
+                <FileEdit className="w-8 h-8 mx-auto text-slate-300" />
+                <div className="font-bold text-sm text-slate-700">ยังไม่มีรายการขอปรับปรุงแผนระหว่างปี</div>
+                <div className="text-xs text-slate-400">เมื่อฝ่ายที่ได้รับสิทธิ์ส่งคำขอปรับปรุงแผน รายการเปรียบเทียบจะปรากฏที่นี่</div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                      <th className="p-3 w-10 text-center">ลำดับ</th>
+                      <th className="p-3">รายการวัสดุ/ครุภัณฑ์</th>
+                      <th className="p-3">ฝ่าย/แผนก</th>
+                      <th className="p-3 text-center">ประเภทการปรับแผน</th>
+                      <th className="p-3 text-right">ยอดเดิม</th>
+                      <th className="p-3 text-right">ยอดใหม่ที่ขอ</th>
+                      <th className="p-3 text-center">ผลต่าง (+/-)</th>
+                      <th className="p-3 text-right">ราคา/หน่วย</th>
+                      <th className="p-3 text-right">งบประมาณรวม</th>
+                      <th className="p-3">เหตุผลความจำเป็น</th>
+                      <th className="p-3 text-center">สถานะ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {requests
+                      .filter(r => r.isRevisionItem)
+                      .map((r, idx) => {
+                        const price = r.unitPrice ?? itemPrices[r.itemName] ?? guessPrice(r.itemName, r.unit);
+                        const baseQty = r.revisionBaseQty !== undefined ? r.revisionBaseQty : (r.qtyOriginal ?? r.qtyRequested);
+                        const diff = r.qtyRequested - baseQty;
+                        const totalMoney = r.qtyRequested * price;
+
+                        return (
+                          <tr key={r.id} className="hover:bg-slate-50/70">
+                            <td className="p-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                            <td className="p-3 font-bold text-slate-900">
+                              {r.itemName}
+                              <div className="text-[10px] font-normal text-slate-400 font-mono">รหัส: {r.id}</div>
+                            </td>
+                            <td className="p-3 text-slate-700">{deptName(r.deptId)}</td>
+                            <td className="p-3 text-center">
+                              {r.revisionType === 'add' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                                  <PlusCircle className="w-3 h-3 text-emerald-600" />
+                                  เพิ่มรายการใหม่
+                                </span>
+                              ) : r.revisionType === 'cancel' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-bold text-[10px]">
+                                  <XCircle className="w-3 h-3 text-rose-600" />
+                                  ขอยกเลิกรายการ
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[10px]">
+                                  <FileEdit className="w-3 h-3 text-amber-600" />
+                                  ปรับเปลี่ยนยอด
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3 text-right font-mono text-slate-500">
+                              {baseQty} {r.unit}
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-indigo-900">
+                              {r.qtyRequested} {r.unit}
+                            </td>
+                            <td className="p-3 text-center font-mono font-bold">
+                              {diff > 0 ? (
+                                <span className="text-emerald-600">+{diff}</span>
+                              ) : diff < 0 ? (
+                                <span className="text-rose-600">{diff}</span>
+                              ) : (
+                                <span className="text-slate-400">0</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-right font-mono text-slate-700">
+                              {fmtBaht(price)}
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-slate-900">
+                              {fmtBaht(totalMoney)}
+                            </td>
+                            <td className="p-3 text-slate-600 max-w-xs text-xs">
+                              {r.revisionReason || r.reason || '-'}
+                            </td>
+                            <td className="p-3 text-center">
+                              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold">
+                                {r.status}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

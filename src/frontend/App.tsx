@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { CategoryId, Department, RequestItem, User, UserRole, WorkGroup, LogEntry } from './types';
+import { CategoryId, Department, RequestItem, User, UserRole, WorkGroup, LogEntry, MaterialItem, DepartmentRevisionPermission } from './types';
 import { CUSTOM_UNITS, SEED_USERS, seedRequests, generate10000Requests, INITIAL_WORK_GROUPS, DEPARTMENTS, saveCustomCategory, deleteCustomCategory } from './data/catalog';
 
 import { Sidebar } from './components/Sidebar';
@@ -12,6 +12,7 @@ import { AdminUsersView } from './components/AdminUsersView';
 import { AdminMaterialsView } from './components/AdminMaterialsView';
 import { AdminOrgView } from './components/AdminOrgView';
 import { AdminLogsView } from './components/AdminLogsView';
+import { AdminDangerZone } from './components/AdminDangerZone';
 import { AuthView } from './components/AuthView';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { PrintableReportModal } from './components/PrintableReportModal';
@@ -99,6 +100,11 @@ export default function App() {
     return saved ? JSON.parse(saved) : {};
   });
 
+  const [revisionPermissions, setRevisionPermissions] = useState<Record<string, DepartmentRevisionPermission>>(() => {
+    const saved = localStorage.getItem('survey_revision_permissions');
+    return saved ? JSON.parse(saved) : {};
+  });
+
   const [isPlanFrozen, setIsPlanFrozen] = useState<boolean>(() => {
     const saved = localStorage.getItem('survey_plan_frozen');
     return saved ? JSON.parse(saved) : false;
@@ -147,7 +153,7 @@ export default function App() {
     return null; // Start on login page
   });
 
-  const [activeRole, setActiveRole] = useState<UserRole | 'users' | 'materials' | 'org' | 'logs'>('staff');
+  const [activeRole, setActiveRole] = useState<UserRole | 'users' | 'materials' | 'org' | 'logs' | 'danger'>('staff');
 
   // Modals & Alerts
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
@@ -253,6 +259,7 @@ export default function App() {
           if (d.customItems) setCustomItems(d.customItems);
           if (d.itemPrices) setItemPrices(d.itemPrices);
           if (d.materialActive) setMaterialActive(d.materialActive);
+          if (d.revisionPermissions) setRevisionPermissions(d.revisionPermissions);
           if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
           if (d.fiscalYear) setFiscalYear(d.fiscalYear);
           if (d.isCatalogCleared !== undefined) setIsCatalogCleared(d.isCatalogCleared);
@@ -312,6 +319,10 @@ export default function App() {
   }, [materialActive]);
 
   useEffect(() => {
+    localStorage.setItem('survey_revision_permissions', JSON.stringify(revisionPermissions));
+  }, [revisionPermissions]);
+
+  useEffect(() => {
     localStorage.setItem('survey_plan_frozen', JSON.stringify(isPlanFrozen));
   }, [isPlanFrozen]);
 
@@ -337,6 +348,7 @@ export default function App() {
         customItems,
         itemPrices,
         materialActive,
+        revisionPermissions,
         isPlanFrozen,
         fiscalYear,
         isCatalogCleared,
@@ -346,7 +358,7 @@ export default function App() {
     .catch(err => {
       console.error('Failed to sync state to backend:', err);
     });
-  }, [workGroups, departments, users, requests, customItems, itemPrices, materialActive, isPlanFrozen, fiscalYear, isCatalogCleared, logs, isLoadingBackend, apiBase]);
+  }, [workGroups, departments, users, requests, customItems, itemPrices, materialActive, revisionPermissions, isPlanFrozen, fiscalYear, isCatalogCleared, logs, isLoadingBackend, apiBase]);
 
   // Real-time EventSource listener for Server-Sent Events (SSE)
   useEffect(() => {
@@ -358,7 +370,7 @@ export default function App() {
     // Set up standard browser EventSource
     const es = new EventSource(sseUrl);
 
-    es.onmessage = (event) => {
+    es.onmessage = async (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'connected') {
@@ -372,29 +384,33 @@ export default function App() {
         }
 
         // Instant refresh of local state from server
-        fetch(`${apiBase}/state`, {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-        })
-          .then(res => res.json())
-          .then(res => {
-            if (res.success && res.data) {
-              const d = res.data;
-              isPollingUpdateRef.current = true;
-              if (d.workGroups) setWorkGroups(d.workGroups);
-              if (d.departments) setDepartments(d.departments);
-              if (d.users) setUsers(d.users);
-              if (d.requests) setRequests(d.requests);
-              if (d.customItems) setCustomItems(d.customItems);
-              if (d.itemPrices) setItemPrices(d.itemPrices);
-              if (d.materialActive) setMaterialActive(d.materialActive);
-              if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
-              if (d.fiscalYear) setFiscalYear(d.fiscalYear);
-              if (d.logs) setLogs(d.logs);
-            }
-          })
-          .catch(err => {
-            console.error('[SSE] Error refreshing state:', err);
+        try {
+          const res = await fetch(`${apiBase}/state`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
           });
+          if (res.ok) {
+            const contentType = res.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+              const resJson = await res.json();
+              if (resJson.success && resJson.data) {
+                const d = resJson.data;
+                isPollingUpdateRef.current = true;
+                if (d.workGroups) setWorkGroups(d.workGroups);
+                if (d.departments) setDepartments(d.departments);
+                if (d.users) setUsers(d.users);
+                if (d.requests) setRequests(d.requests);
+                if (d.customItems) setCustomItems(d.customItems);
+                if (d.itemPrices) setItemPrices(d.itemPrices);
+                if (d.materialActive) setMaterialActive(d.materialActive);
+                if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
+                if (d.fiscalYear) setFiscalYear(d.fiscalYear);
+                if (d.logs) setLogs(d.logs);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[SSE] Error refreshing state:', err);
+        }
       } catch (err) {
         console.error('[SSE] Failed to process message event:', err);
       }
@@ -412,37 +428,84 @@ export default function App() {
   // Auto-login on mount if token is saved
   useEffect(() => {
     const savedToken = localStorage.getItem('survey_token');
-    if (savedToken) {
-      fetch(`${apiBase}/auth/me`, {
-        headers: { 'Authorization': `Bearer ${savedToken}` }
-      })
-      .then(res => res.json())
-      .then(res => {
-        if (res.success && res.user) {
-          setCurrentUser(res.user);
-          if (res.user.role === 'admin') {
+    if (!savedToken) return;
+
+    const verifyToken = async () => {
+      try {
+        let res: Response | null = null;
+        try {
+          res = await fetch(`${apiBase}/auth/me`, {
+            headers: { 'Authorization': `Bearer ${savedToken}` }
+          });
+          if (!res || !res.ok) {
+            res = await fetch('/api/auth/me', {
+              headers: { 'Authorization': `Bearer ${savedToken}` }
+            });
+          }
+        } catch (e) {
+          try {
+            res = await fetch('/api/auth/me', {
+              headers: { 'Authorization': `Bearer ${savedToken}` }
+            });
+          } catch (err2) {}
+        }
+
+        if (!res) return;
+
+        const contentType = res.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          return;
+        }
+
+        const resData = await res.json();
+        if (resData.success && resData.user) {
+          setCurrentUser(resData.user);
+          if (resData.user.role === 'admin') {
             setActiveRole('staff');
           } else {
-            setActiveRole(res.user.role);
+            setActiveRole(resData.user.role);
           }
-        } else {
+        } else if (res.status === 401 || res.status === 403) {
           localStorage.removeItem('survey_token');
         }
-      })
-      .catch(err => {
-        console.error('Offline or failed auto-login, using local storage backup:', err);
-      });
-    }
+      } catch (err) {
+        console.warn('Auto-login verification skipped or failed:', err);
+      }
+    };
+
+    verifyToken();
   }, [apiBase]);
 
   // Login handler
   const handleLogin = async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const res = await fetch(`${apiBase}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
+      let res: Response | null = null;
+      try {
+        res = await fetch(`${apiBase}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        if (!res || !res.ok) {
+          res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+          });
+        }
+      } catch (e) {
+        res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+      }
+
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        return { success: false, error: 'เซิร์ฟเวอร์ยังไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง' };
+      }
+
       const data = await res.json();
       if (data.success && data.token) {
         localStorage.setItem('survey_token', data.token);
@@ -478,6 +541,10 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newUser)
       });
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        return { success: false, error: 'เซิร์ฟเวอร์ยังไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง' };
+      }
       const data = await res.json();
       if (data.success) {
         return { success: true, error: data.message };
@@ -496,6 +563,10 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, newPassword: newPw })
       });
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        return { success: false, error: 'เซิร์ฟเวอร์ยังไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง' };
+      }
       const data = await res.json();
       if (data.success) {
         setUsers(prev => prev.map(u => u.username === username ? { ...u, password: newPw } : u));
@@ -617,6 +688,114 @@ export default function App() {
       }
       return r;
     }));
+  };
+
+  // Mid-Year Revision Handlers
+  const handleUnlockRevision = (deptId: string, isUnlocked: boolean, note?: string, expiresAt?: string) => {
+    setRevisionPermissions(prev => ({
+      ...prev,
+      [deptId]: {
+        deptId,
+        isUnlocked,
+        unlockedAt: isUnlocked ? new Date().toISOString() : undefined,
+        unlockedBy: currentUser ? currentUser.name : 'เจ้าหน้าที่ฝ่ายพัสดุ',
+        expiresAt,
+        note: note || ''
+      }
+    }));
+
+    logAction(
+      'status_change',
+      'requests',
+      isUnlocked 
+        ? `ฝ่ายพัสดุเปิดสิทธิ์ให้ฝ่าย '${deptId}' เข้าปรับปรุงแผนงบประมาณระหว่างปี (${note || 'อนุมัติสิทธิ์ปรับแผน'})`
+        : `ฝ่ายพัสดุปิดสิทธิ์การปรับปรุงแผนงบประมาณของฝ่าย '${deptId}'`
+    );
+
+    // Also notify server via API for instant real-time sync
+    fetch(`${apiBase}/procurement/revision/unlock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deptId,
+        isUnlocked,
+        note,
+        expiresAt,
+        unlockedBy: currentUser ? currentUser.username : 'proc_officer'
+      })
+    }).catch(err => console.error('Error syncing revision permission:', err));
+  };
+
+  const handleSubmitRevisionPlan = (
+    deptId: string, 
+    items: { 
+      id?: string; 
+      itemName: string; 
+      unit?: string;
+      qtyRequested: number; 
+      revisionType: 'add' | 'modify' | 'cancel'; 
+      revisionBaseQty?: number;
+      revisionReason: string;
+    }[]
+  ) => {
+    setRequests(prev => {
+      let updated = [...prev];
+      items.forEach(item => {
+        if (item.id) {
+          // Existing approved/requested item being modified or cancelled
+          const idx = updated.findIndex(r => r.id === item.id);
+          if (idx !== -1) {
+            const old = updated[idx];
+            const baseQty = old.revisionBaseQty !== undefined ? old.revisionBaseQty : old.qtyRequested;
+            updated[idx] = {
+              ...old,
+              qtyRequested: item.revisionType === 'cancel' ? 0 : item.qtyRequested,
+              qtyOriginal: old.qtyOriginal ?? old.qtyRequested,
+              isRevisionItem: true,
+              revisionType: item.revisionType,
+              revisionBaseQty: baseQty,
+              revisionReason: item.revisionReason,
+              revisionStatus: 'submitted',
+              revisionRequestedAt: new Date().toISOString(),
+              revisionRequestedBy: currentUser ? currentUser.name : undefined,
+              status: 'pending_head',
+              comment: item.revisionType === 'cancel' ? `[ขอยกเลิกรายการ] ${item.revisionReason}` : `[ขอปรับปรุงยอด] ${item.revisionReason}`
+            };
+          }
+        } else {
+          // Newly added item during mid-year revision
+          const newId = 'REQ-REV-' + String(Math.floor(Math.random() * 90000) + 10000);
+          updated.push({
+            id: newId,
+            deptId,
+            itemName: item.itemName,
+            unit: item.unit || CUSTOM_UNITS[item.itemName] || guessUnit(item.itemName),
+            qtyLastYear: 0,
+            qtyOriginal: item.qtyRequested,
+            qtyRequested: item.qtyRequested,
+            status: 'pending_head',
+            comment: `[ขอเพิ่มรายการใหม่กลางปี] ${item.revisionReason}`,
+            reason: item.revisionReason,
+            unitPrice: itemPrices[item.itemName] ?? null,
+            fiscalYear,
+            isRevisionItem: true,
+            revisionType: 'add',
+            revisionBaseQty: 0,
+            revisionReason: item.revisionReason,
+            revisionStatus: 'submitted',
+            revisionRequestedAt: new Date().toISOString(),
+            revisionRequestedBy: currentUser ? currentUser.name : undefined
+          });
+        }
+      });
+      return updated;
+    });
+
+    logAction(
+      'edit',
+      'requests',
+      `ฝ่าย/แผนก ${deptId} ได้ส่งยื่น "คำขอปรับปรุงแผนงบประมาณกลางปี" จำนวน ${items.length} รายการ เสนอหัวหน้ากลุ่มงานพิจารณา`
+    );
   };
 
   // Procurement Handlers
@@ -849,6 +1028,44 @@ export default function App() {
     });
   };
 
+  const handleBulkImportMaterials = (items: MaterialItem[]) => {
+    setCustomItems(prev => {
+      const nextState = { ...prev };
+      items.forEach(it => {
+        if (!nextState[it.category]) {
+          nextState[it.category] = [];
+        }
+        if (!nextState[it.category].includes(it.name)) {
+          nextState[it.category] = [...nextState[it.category], it.name];
+        }
+        if (it.unit) {
+          CUSTOM_UNITS[it.name] = it.unit;
+        }
+      });
+      return nextState;
+    });
+
+    setItemPrices(prev => {
+      const copy = { ...prev };
+      items.forEach(it => {
+        if (it.price > 0) {
+          copy[it.name] = it.price;
+        }
+      });
+      return copy;
+    });
+
+    setMaterialActive(prev => {
+      const copy = { ...prev };
+      items.forEach(it => {
+        copy[it.name] = it.active !== false;
+      });
+      return copy;
+    });
+
+    logAction('add', 'materials', `นำเข้ารายการวัสดุกลางจำนวน ${items.length} รายการ จากไฟล์ Excel สำเร็จ`);
+  };
+
   // Admin Org / Work Group & Department Handlers
   const handleAdminAddWorkGroup = (name: string, description?: string) => {
     const newWg: WorkGroup = {
@@ -1015,7 +1232,7 @@ export default function App() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
-                  Live Sync v1.10
+                  Live Sync v1.11
                 </span>
               </p>
             </div>
@@ -1316,6 +1533,8 @@ export default function App() {
                     {activeRole === 'users' && 'ผู้ดูแลระบบ — จัดการบัญชีผู้ใช้งาน'}
                     {activeRole === 'org' && 'ผู้ดูแลระบบ — จัดการกลุ่มงานและฝ่าย/แผนก'}
                     {activeRole === 'materials' && 'ผู้ดูแลระบบ — แค็ตตาล็อกวัสดุ'}
+                    {activeRole === 'logs' && 'ผู้ดูแลระบบ — บันทึกประวัติการทำงาน (Audit Logs)'}
+                    {activeRole === 'danger' && 'ผู้ดูแลระบบสูงสุด — Danger Zone & ล้าง/สำรองข้อมูล'}
                   </h2>
                   <span className="inline-flex items-center gap-1 bg-cyan-50 text-cyan-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-cyan-200">
                     <CheckCircle2 className="w-3.5 h-3.5 text-cyan-600" />
@@ -1349,6 +1568,8 @@ export default function App() {
                 customItems={customItems}
                 fiscalYear={fiscalYear}
                 onSubmitRequests={handleSubmitStaffRequests}
+                onSubmitRevisionPlan={handleSubmitRevisionPlan}
+                revisionPermissions={revisionPermissions}
                 onAddCustomItem={handleAddCustomItem}
                 isPlanFrozen={isPlanFrozen}
                 onRequestConfirm={handleOpenConfirm}
@@ -1379,6 +1600,10 @@ export default function App() {
                 requests={requests}
                 itemPrices={itemPrices}
                 fiscalYear={fiscalYear}
+                departments={departments}
+                workGroups={workGroups}
+                revisionPermissions={revisionPermissions}
+                onUnlockRevision={handleUnlockRevision}
                 onUpdateUnitPrice={handleUpdateUnitPrice}
                 onUpdateQty={handleUpdateQty}
                 onSubmitToProcHead={handleSubmitToProcHead}
@@ -1395,6 +1620,10 @@ export default function App() {
                 requests={requests}
                 itemPrices={itemPrices}
                 fiscalYear={fiscalYear}
+                departments={departments}
+                workGroups={workGroups}
+                revisionPermissions={revisionPermissions}
+                onUnlockRevision={handleUnlockRevision}
                 onUpdateUnitPrice={handleUpdateUnitPrice}
                 onUpdateQty={handleUpdateQty}
                 onApproveToExec={handleProcHeadApproveToExec}
@@ -1412,6 +1641,8 @@ export default function App() {
                 requests={requests}
                 itemPrices={itemPrices}
                 fiscalYear={fiscalYear}
+                departments={departments}
+                workGroups={workGroups}
                 onApproveFinalBudget={handleExecApproveFinal}
                 onRejectBack={handleExecRejectBack}
                 onApproveAllFinal={handleExecApproveAllFinal}
@@ -1469,6 +1700,7 @@ export default function App() {
                 onToastAlert={handleToast}
                 onAddCustomCategory={handleAddCustomCategory}
                 onDeleteCustomCategory={handleDeleteCustomCategory}
+                onBulkImportMaterials={handleBulkImportMaterials}
               />
             )}
 
@@ -1478,6 +1710,39 @@ export default function App() {
                 currentUser={currentUser}
                 onRequestConfirm={handleOpenConfirm}
                 onClearLogs={handleClearLogs}
+                onToastAlert={handleToast}
+              />
+            )}
+
+            {activeRole === 'danger' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin' || currentUser.username === 'admin') && (
+              <AdminDangerZone
+                currentUser={currentUser}
+                apiBase={apiBase}
+                totalRequests={requests.length}
+                totalUsers={users.length}
+                totalDepartments={departments.length}
+                fiscalYear={fiscalYear}
+                onRefreshState={() => {
+                  fetch(`${apiBase}/state`)
+                    .then(r => r.json())
+                    .then(json => {
+                      if (json.success && json.data) {
+                        const d = json.data;
+                        if (d.workGroups) setWorkGroups(d.workGroups);
+                        if (d.departments) setDepartments(d.departments);
+                        if (d.users) setUsers(d.users);
+                        if (d.requests) setRequests(d.requests);
+                        if (d.customItems) setCustomItems(d.customItems);
+                        if (d.itemPrices) setItemPrices(d.itemPrices);
+                        if (d.materialActive) setMaterialActive(d.materialActive);
+                        if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
+                        if (d.fiscalYear) setFiscalYear(d.fiscalYear);
+                        if (d.isCatalogCleared !== undefined) setIsCatalogCleared(d.isCatalogCleared);
+                        if (d.logs) setLogs(d.logs);
+                      }
+                    })
+                    .catch(() => {});
+                }}
                 onToastAlert={handleToast}
               />
             )}
@@ -1504,6 +1769,9 @@ export default function App() {
         <PrintableReportModal
           requests={requests}
           itemPrices={itemPrices}
+          departments={departments}
+          workGroups={workGroups}
+          fiscalYear={fiscalYear}
           onClose={() => setShowPrintReportModal(false)}
         />
       )}

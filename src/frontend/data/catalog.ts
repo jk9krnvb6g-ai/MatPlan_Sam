@@ -154,6 +154,10 @@ export function deleteCustomCategory(key: string) {
   window.dispatchEvent(new Event('categories_updated'));
 }
 
+export function getCategoryLabel(catId: string): string {
+  return CATEGORY_LABELS[catId] || catId;
+}
+
 export const CATEGORY_LABELS: Record<string, string> = new Proxy(defaultCategoryLabels, {
   get(target, prop) {
     if (typeof prop !== 'string') return undefined;

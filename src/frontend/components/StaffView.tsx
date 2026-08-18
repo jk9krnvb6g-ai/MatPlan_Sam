@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { CategoryId, RequestItem, User, Department, WorkGroup } from '../types';
+import { CategoryId, RequestItem, User, Department, WorkGroup, DepartmentRevisionPermission } from '../types';
 import { CategoryBadge } from './CategoryBadge';
 import { 
   CATALOG, 
@@ -18,14 +18,16 @@ import { MiniBarsChart } from './MiniBarsChart';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
 import { sortItems } from '../utils/sortHelper';
-import { Plus, Info, Send, AlertCircle, FileText, ArrowUpDown, Edit3, CheckCircle2, TrendingDown, TrendingUp, Minus, UserCheck, PackageCheck, Crown, ArrowRightLeft, Clock, Filter, Search, ShieldCheck } from 'lucide-react';
+import { Plus, Info, Send, AlertCircle, FileText, ArrowUpDown, Edit3, CheckCircle2, TrendingDown, TrendingUp, Minus, UserCheck, PackageCheck, Crown, ArrowRightLeft, Clock, Filter, Search, ShieldCheck, Sparkles, Unlock, Lock, RefreshCw, XCircle, PlusCircle } from 'lucide-react';
 
 interface StaffViewProps {
   currentUser: User;
   requests: RequestItem[];
   customItems: Record<string, string[]>;
   fiscalYear: string;
+  revisionPermissions?: Record<string, DepartmentRevisionPermission>;
   onSubmitRequests: (deptId: string, items: { itemName: string; qtyRequested: number }[], reason: string) => void;
+  onSubmitRevisionPlan?: (deptId: string, items: { itemName: string; qtyRequested: number; revisionType: 'add' | 'modify' | 'cancel'; revisionBaseQty?: number; revisionReason?: string }[], reason: string) => void;
   onAddCustomItem: (category: CategoryId, name: string, unit: string) => void;
   isPlanFrozen: boolean;
   onRequestConfirm: (opts: { title: string; message: string; confirmText?: string; variant?: 'primary' | 'danger' | 'warning'; onConfirm: () => void }) => void;
@@ -39,7 +41,9 @@ export const StaffView: React.FC<StaffViewProps> = ({
   requests,
   customItems,
   fiscalYear,
+  revisionPermissions = {},
   onSubmitRequests,
+  onSubmitRevisionPlan,
   onAddCustomItem,
   isPlanFrozen,
   onRequestConfirm,
@@ -48,7 +52,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
   workGroups
 }) => {
   const isAdmin = currentUser.role === 'admin';
-  const [activeTab, setActiveTab] = useState<'request' | 'rejected' | 'submitted' | 'recent'>('request');
+  const [activeTab, setActiveTab] = useState<'request' | 'rejected' | 'submitted' | 'recent' | 'revision'>('request');
   const [activeSheetCat, setActiveSheetCat] = useState<CategoryId>('office');
 
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
@@ -57,6 +61,12 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'name' | 'lastYear' | 'requested' | 'diff'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Revision state
+  const isDeptUnlockedForRevision = Boolean(revisionPermissions[selectedDeptId]?.isUnlocked);
+  const currentDeptPerm = revisionPermissions[selectedDeptId];
+  const [revisionInputs, setRevisionInputs] = useState<Record<string, { qty: number; reason: string; type: 'add' | 'modify' | 'cancel' }>>({});
+  const [overallRevisionReason, setOverallRevisionReason] = useState(`ขอปรับปรุงแผนงบประมาณรอบ 6 เดือน ประจำปีงบประมาณ ${fiscalYear}`);
 
   const fiscalYearOptions = useMemo(() => {
     const yearsInRequests = requests.map(r => r.fiscalYear).filter(Boolean) as string[];
@@ -551,7 +561,60 @@ export const StaffView: React.FC<StaffViewProps> = ({
           <AlertCircle className="w-4 h-4 text-rose-600" />
           <span>รายการที่ถูกตีกลับให้แก้ไข ({rejectedRequests.length.toLocaleString('th-TH')})</span>
         </button>
+
+        {/* Tab 5: ปรับปรุงแผนงบประมาณรอบ 6 เดือน */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('revision')}
+          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+            activeTab === 'revision'
+              ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
+              : isDeptUnlockedForRevision
+              ? 'bg-amber-100/70 text-amber-900 hover:bg-amber-100 font-bold animate-pulse'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-700" />
+          <span>
+            ขอปรับปรุงแผนงบประมาณ (รอบ 6 เดือน)
+            {isDeptUnlockedForRevision && (
+              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">
+                เปิดสิทธิ์แล้ว
+              </span>
+            )}
+          </span>
+        </button>
       </div>
+
+      {/* Notification Banner when department is unlocked */}
+      {isDeptUnlockedForRevision && activeTab !== 'revision' && (
+        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-300 rounded-2xl p-4 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-emerald-500 text-white rounded-xl shadow-xs">
+              <Unlock className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                <span>ฝ่ายของท่านได้รับอนุมัติให้ "ปรับปรุงแผนงบประมาณรอบ 6 เดือน" แล้ว</span>
+                <span className="px-2 py-0.5 rounded-md bg-emerald-200 text-emerald-900 text-[10px] font-bold">
+                  Active
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-0.5">
+                {currentDeptPerm?.note ? `หมายเหตุจากพัสดุ: ${currentDeptPerm.note}` : 'เจ้าหน้าที่พัสดุได้ทำการเปิดสิทธิ์ให้ฝ่ายของท่านปรับ เพิ่ม หรือลดยอดรายการที่เคยอนุมัติแล้ว'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('revision')}
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 whitespace-nowrap"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            เข้าสู่หน้าปรับปรุงแผนทันที ↗
+          </button>
+        </div>
+      )}
 
       {/* TAB 1: แบบสำรวจรายการขอจัดซื้อ (รูปที่ 2 อยู่บน รูปที่ 1) */}
       {activeTab === 'request' && (
@@ -1606,6 +1669,251 @@ export const StaffView: React.FC<StaffViewProps> = ({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* TAB 5: ปรับปรุงแผนงบประมาณรอบ 6 เดือน (MID-YEAR REVISION) */}
+      {activeTab === 'revision' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Header Banner */}
+          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-6 text-white shadow-md">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 text-white text-xs font-bold backdrop-blur-xs">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                  ระบบยื่นคำขอปรับปรุงแผนงบประมาณรอบ 6 เดือน (Mid-Year Budget Revision)
+                </div>
+                <h2 className="text-xl md:text-2xl font-bold">
+                  ปรับปรุงแผนการจัดหาพัสดุ — ฝ่าย{currentDept.name}
+                </h2>
+                <p className="text-xs md:text-sm text-amber-100 max-w-3xl leading-relaxed">
+                  สำหรับรายการที่ผ่านการอนุมัติแล้ว ท่านสามารถ <strong className="text-white">ขอปรับเพิ่มยอด, ขอลดยอด, ขอยกเลิกรายการเดิม</strong> หรือ <strong className="text-white">ขอเพิ่มรายการใหม่</strong> พร้อมระบุเหตุผลความจำเป็นเพื่อให้ฝ่ายพัสดุและผู้บริหารพิจารณา
+                </p>
+              </div>
+
+              <div className="bg-white/10 backdrop-blur-md border border-white/25 rounded-2xl p-4 text-xs space-y-1 self-start md:self-auto min-w-[220px]">
+                <div className="text-amber-100 font-medium">สถานะสิทธิ์การปรับแผน:</div>
+                {isDeptUnlockedForRevision ? (
+                  <div className="flex items-center gap-1.5 font-bold text-emerald-200 text-sm">
+                    <Unlock className="w-4 h-4 text-emerald-300" />
+                    เปิดให้ปรับแผนได้
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 font-bold text-rose-200 text-sm">
+                    <Lock className="w-4 h-4 text-rose-300" />
+                    ยังไม่เปิดสิทธิ์ (ติดต่อพัสดุ)
+                  </div>
+                )}
+                {currentDeptPerm?.note && (
+                  <div className="text-[11px] text-white/80 pt-1 border-t border-white/10">
+                    หมายเหตุ: {currentDeptPerm.note}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {!isDeptUnlockedForRevision ? (
+            <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center space-y-4 shadow-sm">
+              <div className="w-16 h-16 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mx-auto">
+                <Lock className="w-8 h-8" />
+              </div>
+              <div className="space-y-1 max-w-md mx-auto">
+                <h3 className="font-bold text-slate-800 text-lg">ยังไม่เปิดสิทธิ์ปรับปรุงแผนสำหรับฝ่ายนี้</h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  ขณะนี้ฝ่ายของท่านยังไม่ได้รับสิทธิ์เปิดแก้ไขแผนรอบ 6 เดือน หากมีความจำเป็นต้องปรับปรุงยอดหรือเพิ่มรายการ กรุณาประสานงานแจ้งเจ้าหน้าที่พัสดุเพื่อทำการเปิดสิทธิ์ในระบบ
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Reason input for full revision package */}
+              <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-2">
+                <label className="block text-xs font-bold text-slate-700">
+                  วัตถุประสงค์ / เหตุผลความจำเป็นในการปรับปรุงแผนภาพรวมของฝ่าย:
+                </label>
+                <input
+                  type="text"
+                  value={overallRevisionReason}
+                  onChange={e => setOverallRevisionReason(e.target.value)}
+                  placeholder="ระบุเหตุผล เช่น เนื่องจากมีการจัดตั้งโครงการใหม่ หรือปริมาณงานเพิ่มขึ้นในไตรมาส 3..."
+                  className="w-full px-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all font-medium text-slate-800"
+                />
+              </div>
+
+              {/* Table of Approved Items Available for Modification */}
+              <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm md:text-base flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-indigo-600" />
+                      1. รายการเดิมที่ได้รับอนุมัติแล้ว (สามารถปรับเปลี่ยนยอด หรือขอยกเลิก)
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      กรอกจำนวนใหม่ที่ต้องการปรับ หรือเลือกประเภทการปรับแผนของแต่ละรายการ
+                    </p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                        <th className="p-3 w-10 text-center">ลำดับ</th>
+                        <th className="p-3">รายการวัสดุ</th>
+                        <th className="p-3 w-28">หมวดหมู่</th>
+                        <th className="p-3 text-center w-20">หน่วยนับ</th>
+                        <th className="p-3 text-right w-24">ยอดเดิมที่อนุมัติ</th>
+                        <th className="p-3 text-center w-36">การดำเนินการ</th>
+                        <th className="p-3 text-right w-28">ยอดที่ขอใหม่</th>
+                        <th className="p-3 text-center w-24">ผลต่าง (+/-)</th>
+                        <th className="p-3">เหตุผลการปรับของรายการนี้</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {requests
+                        .filter(r => r.deptId === selectedDeptId && (r.status === 'approved' || r.isApproved || r.isRevisionItem))
+                        .map((r, idx) => {
+                          const baseQty = r.revisionBaseQty !== undefined ? r.revisionBaseQty : (r.qtyOriginal ?? r.qtyRequested);
+                          const inputState = revisionInputs[r.itemName] ?? {
+                            qty: r.qtyRequested,
+                            type: r.revisionType ?? 'modify',
+                            reason: r.revisionReason ?? ''
+                          };
+                          const newQty = inputState.type === 'cancel' ? 0 : inputState.qty;
+                          const diff = newQty - baseQty;
+
+                          return (
+                            <tr key={r.id} className="hover:bg-slate-50/70">
+                              <td className="p-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                              <td className="p-3 font-bold text-slate-900">
+                                {r.itemName}
+                              </td>
+                              <td className="p-3 text-slate-500">{CATEGORY_LABELS[getItemCategory(r.itemName)]}</td>
+                              <td className="p-3 text-center text-slate-600">{r.unit || guessUnit(r.itemName)}</td>
+                              <td className="p-3 text-right font-mono font-bold text-slate-600">
+                                {baseQty}
+                              </td>
+                              <td className="p-3 text-center">
+                                <select
+                                  value={inputState.type}
+                                  onChange={e => {
+                                    const val = e.target.value as 'modify' | 'cancel';
+                                    setRevisionInputs(prev => ({
+                                      ...prev,
+                                      [r.itemName]: {
+                                        ...inputState,
+                                        type: val,
+                                        qty: val === 'cancel' ? 0 : inputState.qty
+                                      }
+                                    }));
+                                  }}
+                                  className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700"
+                                >
+                                  <option value="modify">ปรับเปลี่ยนยอด</option>
+                                  <option value="cancel">ขอยกเลิกรายการ</option>
+                                </select>
+                              </td>
+                              <td className="p-3 text-right">
+                                {inputState.type === 'cancel' ? (
+                                  <span className="text-rose-600 font-bold font-mono">0 (ยกเลิก)</span>
+                                ) : (
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    value={inputState.qty}
+                                    onChange={e => {
+                                      const num = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                      setRevisionInputs(prev => ({
+                                        ...prev,
+                                        [r.itemName]: {
+                                          ...inputState,
+                                          qty: num
+                                        }
+                                      }));
+                                    }}
+                                    className="w-20 px-2 py-1 bg-white border border-slate-200 rounded-lg text-right font-mono font-bold text-xs focus:ring-1 focus:ring-amber-500"
+                                  />
+                                )}
+                              </td>
+                              <td className="p-3 text-center font-mono font-bold">
+                                {diff > 0 ? (
+                                  <span className="text-emerald-600">+{diff}</span>
+                                ) : diff < 0 ? (
+                                  <span className="text-rose-600">{diff}</span>
+                                ) : (
+                                  <span className="text-slate-400">0</span>
+                                )}
+                              </td>
+                              <td className="p-3">
+                                <input
+                                  type="text"
+                                  placeholder="ระบุเหตุผล เช่น ยอดเดิมไม่พอ / งานเพิ่ม..."
+                                  value={inputState.reason}
+                                  onChange={e => {
+                                    setRevisionInputs(prev => ({
+                                      ...prev,
+                                      [r.itemName]: {
+                                        ...inputState,
+                                        reason: e.target.value
+                                      }
+                                    }));
+                                  }}
+                                  className="w-full px-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white"
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Submit Revision Plan Button */}
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const approvedItems = requests.filter(r => r.deptId === selectedDeptId && (r.status === 'approved' || r.isApproved || r.isRevisionItem));
+                    const itemsPayload = approvedItems.map(r => {
+                      const baseQty = r.revisionBaseQty !== undefined ? r.revisionBaseQty : (r.qtyOriginal ?? r.qtyRequested);
+                      const inputState = revisionInputs[r.itemName] ?? {
+                        qty: r.qtyRequested,
+                        type: r.revisionType ?? 'modify',
+                        reason: r.revisionReason ?? ''
+                      };
+                      return {
+                        itemName: r.itemName,
+                        qtyRequested: inputState.type === 'cancel' ? 0 : inputState.qty,
+                        revisionType: inputState.type,
+                        revisionBaseQty: baseQty,
+                        revisionReason: inputState.reason
+                      };
+                    });
+
+                    onRequestConfirm({
+                      title: 'ยืนยันการส่งคำขอปรับปรุงแผนงบประมาณรอบ 6 เดือน',
+                      message: `คุณต้องการส่งคำขอปรับปรุงแผนของ "${currentDept.name}" จำนวน ${itemsPayload.length} รายการ ไปยังฝ่ายพัสดุเพื่อพิจารณาหรือไม่?`,
+                      confirmText: 'ส่งคำขอปรับแผน',
+                      variant: 'primary',
+                      onConfirm: () => {
+                        if (onSubmitRevisionPlan) {
+                          onSubmitRevisionPlan(selectedDeptId, itemsPayload, overallRevisionReason);
+                          onToastAlert('ส่งคำขอปรับปรุงแผนงบประมาณเรียบร้อยแล้ว!', 'success');
+                          setActiveTab('submitted');
+                        }
+                      }
+                    });
+                  }}
+                  className="px-6 py-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2 cursor-pointer active:scale-95 transition-all"
+                >
+                  <Send className="w-4 h-4" />
+                  ส่งคำขอปรับปรุงแผนงบประมาณรอบ 6 เดือน
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

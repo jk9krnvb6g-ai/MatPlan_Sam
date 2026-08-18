@@ -10,14 +10,15 @@ import {
   Package,
   Building2,
   Sparkles,
-  History as HistoryIcon
+  History as HistoryIcon,
+  AlertOctagon
 } from 'lucide-react';
 
 interface SidebarProps {
   currentUser: User | null;
-  activeRole: UserRole | 'users' | 'materials' | 'org' | 'logs';
+  activeRole: UserRole | 'users' | 'materials' | 'org' | 'logs' | 'danger';
   pendingCounts: Record<string, number>;
-  onSelectRole: (role: UserRole | 'users' | 'materials' | 'org' | 'logs') => void;
+  onSelectRole: (role: UserRole | 'users' | 'materials' | 'org' | 'logs' | 'danger') => void;
   onChangePassword: () => void;
   onLogout: () => void;
 }
@@ -47,7 +48,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'users' as const, icon: UsersIcon, label: 'จัดการบัญชีผู้ใช้', desc: 'สิทธิ์การใช้งาน' },
     { id: 'org' as const, icon: Building2, label: 'กลุ่มงาน & ฝ่าย', desc: 'ผังโครงสร้าง' },
     { id: 'materials' as const, icon: Package, label: 'แค็ตตาล็อกวัสดุ', desc: 'รายการ & ราคา' },
-    ...(isSuperAdmin ? [{ id: 'logs' as const, icon: HistoryIcon, label: 'Log การใช้งาน', desc: 'ประวัติระบบ' }] : [])
+    ...(isSuperAdmin ? [
+      { id: 'logs' as const, icon: HistoryIcon, label: 'Log การใช้งาน', desc: 'ประวัติระบบ' },
+      { id: 'danger' as const, icon: AlertOctagon, label: 'Danger Zone (ล้างข้อมูล)', desc: 'ควบคุมข้อมูลขั้นสูง' }
+    ] : [])
   ];
 
   const visibleRoles = isAdmin ? rolesList : rolesList.filter(r => userRoles.includes(r.id as UserRole));
@@ -106,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {adminList.map(r => {
                 const Icon = r.icon;
                 const isActive = activeRole === r.id;
-                const badgeCount = pendingCounts[r.id] || 0;
+                const isDanger = r.id === 'danger';
 
                 return (
                   <button
@@ -114,19 +118,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     type="button"
                     onClick={() => onSelectRole(r.id)}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
-                      isActive
-                        ? 'bg-purple-700 text-white border-purple-700 shadow-sm ring-2 ring-purple-600/20 scale-[1.02]'
-                        : 'bg-purple-50/60 text-purple-900 border-purple-200 hover:bg-purple-100'
+                      isDanger
+                        ? isActive
+                          ? 'bg-red-700 text-white border-red-700 shadow-sm ring-2 ring-red-600/30 scale-[1.02]'
+                          : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+                        : isActive
+                          ? 'bg-purple-700 text-white border-purple-700 shadow-sm ring-2 ring-purple-600/20 scale-[1.02]'
+                          : 'bg-purple-50/60 text-purple-900 border-purple-200 hover:bg-purple-100'
                     }`}
                   >
-                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-purple-600'}`} />
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : (isDanger ? 'text-red-600' : 'text-purple-600')}`} />
                     <span>{r.label}</span>
-
-                    {badgeCount > 0 && (
-                      <span className="ml-1 px-1.5 py-0.2 text-[10px] font-black rounded-full bg-purple-200 text-purple-900 border border-purple-300">
-                        {badgeCount}
-                      </span>
-                    )}
                   </button>
                 );
               })}
@@ -137,3 +139,4 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </div>
   );
 };
+

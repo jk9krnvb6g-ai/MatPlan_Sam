@@ -30,6 +30,11 @@ async function startServer() {
   app.use('/system-a/api', apiRouter);
   app.use('/api', apiRouter);
 
+  // Catch-all for undefined API routes to always return JSON (never fall through to HTML SPA)
+  app.all(['/MatPlan/api/*', '/system-a/api/*', '/api/*'], (req, res) => {
+    res.status(404).json({ success: false, error: `API route ${req.originalUrl} not found` });
+  });
+
   // Check if dist folder exists
   const distPath = path.join(process.cwd(), 'dist');
   const isProduction = process.env.NODE_ENV === 'production' || fs.existsSync(path.join(distPath, 'index.html'));

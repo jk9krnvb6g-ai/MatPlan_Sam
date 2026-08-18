@@ -1,17 +1,24 @@
 import React from 'react';
-import { RequestItem } from '../types';
+import { RequestItem, Department, WorkGroup } from '../types';
 import { deptName, fmtBaht, guessPrice } from '../data/catalog';
-import { Printer, X, FileSpreadsheet } from 'lucide-react';
+import { Printer, X, FileSpreadsheet, Download } from 'lucide-react';
+import { exportProcurementPlanExcel } from '../utils/excelHelper';
 
 interface PrintableReportModalProps {
   requests: RequestItem[];
   itemPrices: Record<string, number>;
+  departments?: Department[];
+  workGroups?: WorkGroup[];
+  fiscalYear?: string;
   onClose: () => void;
 }
 
 export const PrintableReportModal: React.FC<PrintableReportModalProps> = ({
   requests,
   itemPrices,
+  departments = [],
+  workGroups = [],
+  fiscalYear = '2569',
   onClose
 }) => {
   const approvedRequests = requests.filter(r => r.status === 'approved');
@@ -38,20 +45,38 @@ export const PrintableReportModal: React.FC<PrintableReportModalProps> = ({
     window.print();
   };
 
+  const handleExportExcel = () => {
+    exportProcurementPlanExcel(
+      requests,
+      itemPrices,
+      departments,
+      workGroups,
+      fiscalYear
+    );
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-white border border-slate-300 rounded-3xl shadow-2xl max-w-4xl w-full p-8 space-y-6 max-h-[90vh] overflow-y-auto text-slate-900">
         {/* Top Control Bar (Hidden on print) */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-200 print:hidden">
+        <div className="flex items-center justify-between pb-4 border-b border-slate-200 print:hidden flex-wrap gap-2">
           <div className="text-sm font-bold text-slate-800 flex items-center gap-2">
             <FileSpreadsheet className="w-5 h-5 text-teal-700" />
             ตัวอย่างเอกสารรายงานสรุปทางการ (Official Survey & Budget Report)
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={handleExportExcel}
+              className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition-colors flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <Download className="w-4 h-4" />
+              ส่งออก Excel (.xlsx)
+            </button>
             <button
               type="button"
               onClick={handlePrint}
-              className="bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md transition-colors flex items-center gap-1.5"
+              className="bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition-colors flex items-center gap-1.5 cursor-pointer active:scale-95"
             >
               <Printer className="w-4 h-4" />
               สั่งพิมพ์ / บันทึกเป็น PDF
@@ -59,7 +84,7 @@ export const PrintableReportModal: React.FC<PrintableReportModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-slate-700 rounded-xl border border-slate-200 hover:bg-slate-50"
+              className="p-2 text-slate-400 hover:text-slate-700 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -92,20 +117,25 @@ export const PrintableReportModal: React.FC<PrintableReportModalProps> = ({
           {/* Table */}
           <div className="overflow-x-auto border border-slate-300 rounded-lg">
             <table className="w-full text-base text-left border-collapse font-sans">
-              <thead className="bg-slate-100 font-bold border-b border-slate-300 uppercase text-sm">
+              <thead className="bg-slate-100 font-bold border-b border-slate-300 uppercase text-xs">
                 <tr>
-                  <th className="p-2 border-r border-slate-200 text-center w-12">ลำดับ</th>
+                  <th className="p-2 border-r border-slate-200 text-center w-10">ลำดับ</th>
                   <th className="p-2 border-r border-slate-200">รายการวัสดุ</th>
                   <th className="p-2 border-r border-slate-200">หน่วยงานที่ขอ</th>
-                  <th className="p-2 border-r border-slate-200 text-right">จำนวนอนุมัติ</th>
+                  <th className="p-2 border-r border-slate-200 text-right">แผนเดิม</th>
+                  <th className="p-2 border-r border-slate-200 text-right">แผนปรับปรุง</th>
+                  <th className="p-2 border-r border-slate-200 text-center">ผลต่าง (+/-)</th>
                   <th className="p-2 border-r border-slate-200 text-right">ราคา/หน่วย</th>
-                  <th className="p-2 text-right">รวมเงิน (บาท)</th>
+                  <th className="p-2 border-r border-slate-200 text-right">รวมเงิน (บาท)</th>
+                  <th className="p-2">เหตุผลความจำเป็น</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200">
+              <tbody className="divide-y divide-slate-200 text-xs">
                 {approvedRequests.map((r, idx) => {
                   const price = calcUnitPrice(r);
                   const lineBudget = calcBudget(r);
+                  const baseQty = r.revisionBaseQty !== undefined ? r.revisionBaseQty : (r.qtyOriginal ?? r.qtyRequested);
+                  const diffQty = r.qtyRequested - baseQty;
 
                   return (
                     <tr key={r.id}>
@@ -114,18 +144,38 @@ export const PrintableReportModal: React.FC<PrintableReportModalProps> = ({
                       </td>
                       <td className="p-2 border-r border-slate-200 font-bold text-slate-800">
                         {r.itemName}
+                        {r.isRevisionItem && (
+                          <span className="ml-1.5 inline-block text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded font-medium">
+                            ปรับแผน
+                          </span>
+                        )}
                       </td>
                       <td className="p-2 border-r border-slate-200 text-slate-600">
                         {deptName(r.deptId)}
                       </td>
+                      <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-500">
+                        {baseQty} {r.unit}
+                      </td>
                       <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-teal-900">
                         {r.qtyRequested} {r.unit}
+                      </td>
+                      <td className="p-2 border-r border-slate-200 text-center font-mono font-bold">
+                        {diffQty > 0 ? (
+                          <span className="text-emerald-600">+{diffQty}</span>
+                        ) : diffQty < 0 ? (
+                          <span className="text-rose-600">{diffQty}</span>
+                        ) : (
+                          <span className="text-slate-400">0</span>
+                        )}
                       </td>
                       <td className="p-2 border-r border-slate-200 text-right font-mono text-slate-700">
                         {fmtBaht(price)}
                       </td>
-                      <td className="p-2 text-right font-mono font-bold text-slate-900">
+                      <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-slate-900">
                         {fmtBaht(lineBudget)}
+                      </td>
+                      <td className="p-2 text-slate-600 text-[11px] max-w-xs truncate">
+                        {r.revisionReason || r.reason || '-'}
                       </td>
                     </tr>
                   );
@@ -133,10 +183,11 @@ export const PrintableReportModal: React.FC<PrintableReportModalProps> = ({
               </tbody>
               <tfoot className="bg-slate-100 font-bold border-t border-slate-300">
                 <tr>
-                  <td colSpan={5} className="p-2 text-right pr-4">รวมงบประมาณทั้งสิ้น</td>
+                  <td colSpan={7} className="p-2 text-right pr-4 text-xs">รวมงบประมาณทั้งสิ้น</td>
                   <td className="p-2 text-right font-mono text-sm text-teal-900">
                     {fmtBaht(totalApprovedBudget)}
                   </td>
+                  <td className="p-2"></td>
                 </tr>
               </tfoot>
             </table>

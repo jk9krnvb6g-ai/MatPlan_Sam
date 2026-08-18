@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
-import { RequestItem, User, Department, WorkGroup, LogEntry } from '../frontend/types';
+import { RequestItem, User, Department, WorkGroup, LogEntry, DepartmentRevisionPermission } from '../frontend/types';
 import { SEED_USERS, seedRequests, INITIAL_WORK_GROUPS, DEPARTMENTS, CATALOG } from '../frontend/data/catalog';
 
 // Helper for synchronous password hashing
@@ -41,6 +41,7 @@ interface DbSchema {
   customItems: Record<string, string[]>;
   itemPrices: Record<string, number>;
   materialActive: Record<string, boolean>;
+  revisionPermissions?: Record<string, DepartmentRevisionPermission>;
   isPlanFrozen: boolean;
   fiscalYear: string;
   isCatalogCleared?: boolean;
@@ -321,7 +322,14 @@ export async function setupMySQLTables(): Promise<{
         adjusted_at VARCHAR(100),
         rejected_by_role VARCHAR(100),
         rejected_by_name VARCHAR(255),
-        rejected_at VARCHAR(100)
+        rejected_at VARCHAR(100),
+        is_revision_item BOOLEAN DEFAULT FALSE,
+        revision_type VARCHAR(50),
+        revision_base_qty INT,
+        revision_reason TEXT,
+        revision_status VARCHAR(50),
+        revision_requested_at VARCHAR(100),
+        revision_requested_by VARCHAR(255)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
@@ -596,7 +604,14 @@ async function loadRelationalState(): Promise<DbSchema | null> {
         adjustedAt: row.adjusted_at || undefined,
         rejectedByRole: row.rejected_by_role || undefined,
         rejectedByName: fixMojibake(row.rejected_by_name) || undefined,
-        rejectedAt: row.rejected_at || undefined
+        rejectedAt: row.rejected_at || undefined,
+        isRevisionItem: Boolean(row.is_revision_item),
+        revisionType: row.revision_type || undefined,
+        revisionBaseQty: row.revision_base_qty !== null ? Number(row.revision_base_qty) : undefined,
+        revisionReason: fixMojibake(row.revision_reason) || undefined,
+        revisionStatus: row.revision_status || undefined,
+        revisionRequestedAt: row.revision_requested_at || undefined,
+        revisionRequestedBy: fixMojibake(row.revision_requested_by) || undefined
       };
     });
 
@@ -645,6 +660,13 @@ async function loadRelationalState(): Promise<DbSchema | null> {
       }
     } catch (e) {}
 
+    let revisionPermissions: Record<string, DepartmentRevisionPermission> = {};
+    try {
+      if (settingsMap['revisionPermissions']) {
+        revisionPermissions = JSON.parse(settingsMap['revisionPermissions']);
+      }
+    } catch (e) {}
+
     const isPlanFrozen = settingsMap['isPlanFrozen'] === 'true';
     const isCatalogCleared = settingsMap['isCatalogCleared'] === 'true';
     const fiscalYear = settingsMap['fiscalYear'] || '2569';
@@ -657,6 +679,7 @@ async function loadRelationalState(): Promise<DbSchema | null> {
       customItems,
       itemPrices,
       materialActive,
+      revisionPermissions,
       isPlanFrozen,
       fiscalYear,
       isCatalogCleared,
@@ -776,9 +799,10 @@ async function saveRelationalState(state: Partial<DbSchema>) {
           INSERT INTO requests (
             id, dept_id, item_name, unit, qty_last_year, qty_requested, status, comment, reason, unit_price, fiscal_year,
             created_at, updated_at, requester_name, requester_sub_dept, qty_original, qty_adjusted, adjusted_by_role,
-            adjusted_by_name, adjusted_at, rejected_by_role, rejected_by_name, rejected_at
+            adjusted_by_name, adjusted_at, rejected_by_role, rejected_by_name, rejected_at,
+            is_revision_item, revision_type, revision_base_qty, revision_reason, revision_status, revision_requested_at, revision_requested_by
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON DUPLICATE KEY UPDATE
             dept_id = VALUES(dept_id),
             item_name = VALUES(item_name),
@@ -801,7 +825,14 @@ async function saveRelationalState(state: Partial<DbSchema>) {
             adjusted_at = VALUES(adjusted_at),
             rejected_by_role = VALUES(rejected_by_role),
             rejected_by_name = VALUES(rejected_by_name),
-            rejected_at = VALUES(rejected_at)
+            rejected_at = VALUES(rejected_at),
+            is_revision_item = VALUES(is_revision_item),
+            revision_type = VALUES(revision_type),
+            revision_base_qty = VALUES(revision_base_qty),
+            revision_reason = VALUES(revision_reason),
+            revision_status = VALUES(revision_status),
+            revision_requested_at = VALUES(revision_requested_at),
+            revision_requested_by = VALUES(revision_requested_by)
         `, [
           r.id,
           r.deptId || 'office',
@@ -825,7 +856,14 @@ async function saveRelationalState(state: Partial<DbSchema>) {
           r.adjustedAt || null,
           r.rejectedByRole || null,
           r.rejectedByName || null,
-          r.rejectedAt || null
+          r.rejectedAt || null,
+          Boolean(r.isRevisionItem),
+          r.revisionType || null,
+          r.revisionBaseQty !== undefined && r.revisionBaseQty !== null ? Number(r.revisionBaseQty) : null,
+          r.revisionReason || null,
+          r.revisionStatus || null,
+          r.revisionRequestedAt || null,
+          r.revisionRequestedBy || null
         ]);
       }
     }
@@ -872,6 +910,9 @@ async function saveRelationalState(state: Partial<DbSchema>) {
     }
     if (state.materialActive !== undefined) {
       settingsToSave['materialActive'] = JSON.stringify(state.materialActive);
+    }
+    if (state.revisionPermissions !== undefined) {
+      settingsToSave['revisionPermissions'] = JSON.stringify(state.revisionPermissions);
     }
     if (state.isPlanFrozen !== undefined) {
       settingsToSave['isPlanFrozen'] = state.isPlanFrozen ? 'true' : 'false';
@@ -1010,7 +1051,14 @@ export async function getPaginatedRequests(filters: {
         adjustedAt: row.adjusted_at || undefined,
         rejectedByRole: row.rejected_by_role || undefined,
         rejectedByName: row.rejected_by_name || undefined,
-        rejectedAt: row.rejected_at || undefined
+        rejectedAt: row.rejected_at || undefined,
+        isRevisionItem: Boolean(row.is_revision_item),
+        revisionType: row.revision_type || undefined,
+        revisionBaseQty: row.revision_base_qty !== null ? Number(row.revision_base_qty) : undefined,
+        revisionReason: row.revision_reason || undefined,
+        revisionStatus: row.revision_status || undefined,
+        revisionRequestedAt: row.revision_requested_at || undefined,
+        revisionRequestedBy: row.revision_requested_by || undefined
       }));
 
       const total = countRows[0]?.cnt || 0;
@@ -1098,4 +1146,192 @@ export function saveDb(data: Partial<DbSchema>): DbSchema {
   }
 
   return dbCache;
+}
+
+export async function wipeData(
+  mode: 'requests' | 'custom_catalog' | 'users_departments' | 'logs' | 'factory_reset', 
+  adminUsername: string = 'admin'
+): Promise<{ success: boolean; message: string; data: DbSchema }> {
+  const timestamp = new Date().toISOString();
+  
+  if (mode === 'requests') {
+    dbCache.requests = [];
+    if (mysqlPool) {
+      try {
+        await mysqlPool.query('TRUNCATE TABLE requests');
+      } catch (e) {
+        console.error('[MySQL] Error truncating requests:', e);
+      }
+    }
+    const logItem: LogEntry = {
+      id: 'LOG-' + Date.now(),
+      timestamp,
+      username: adminUsername,
+      name: 'ผู้ดูแลระบบ (Superadmin)',
+      actionType: 'delete',
+      module: 'requests',
+      description: 'Superadmin สั่งล้างรายการคำขอพัสดุ/ครุภัณฑ์ทั้งหมดในระบบ (Clear All Requests)'
+    };
+    dbCache.logs = [logItem, ...(dbCache.logs || [])];
+    saveDb({ requests: [], logs: dbCache.logs });
+    return { success: true, message: 'ล้างรายการคำขอทั้งหมดสำเร็จ', data: dbCache };
+  }
+
+  if (mode === 'custom_catalog') {
+    dbCache.customItems = {};
+    dbCache.itemPrices = {};
+    dbCache.materialActive = {};
+    dbCache.isCatalogCleared = false;
+    const logItem: LogEntry = {
+      id: 'LOG-' + Date.now(),
+      timestamp,
+      username: adminUsername,
+      name: 'ผู้ดูแลระบบ (Superadmin)',
+      actionType: 'delete',
+      module: 'materials',
+      description: 'Superadmin สั่งรีเซ็ตแคตตาล็อกวัสดุและราคากำหนดเองกลับสู่ค่าเริ่มต้น'
+    };
+    dbCache.logs = [logItem, ...(dbCache.logs || [])];
+    saveDb({
+      customItems: {},
+      itemPrices: {},
+      materialActive: {},
+      isCatalogCleared: false,
+      logs: dbCache.logs
+    });
+    return { success: true, message: 'รีเซ็ตแคตตาล็อกวัสดุสำเร็จ', data: dbCache };
+  }
+
+  if (mode === 'users_departments') {
+    const seedUsersHashed = SEED_USERS.map(u => ({ ...u, password: hashPasswordSync(u.password) }));
+    dbCache.users = seedUsersHashed;
+    dbCache.departments = DEPARTMENTS;
+    dbCache.workGroups = INITIAL_WORK_GROUPS;
+
+    if (mysqlPool) {
+      try {
+        await mysqlPool.query('TRUNCATE TABLE users');
+        await mysqlPool.query('TRUNCATE TABLE departments');
+        await mysqlPool.query('TRUNCATE TABLE work_groups');
+        for (const wg of INITIAL_WORK_GROUPS) {
+          await mysqlPool.query(
+            'INSERT INTO work_groups (id, name, description, code) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name)',
+            [wg.id, wg.name, wg.description || '', wg.code || '']
+          );
+        }
+        for (const d of DEPARTMENTS) {
+          await mysqlPool.query(
+            'INSERT INTO departments (id, name, category, work_group_id) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name=VALUES(name)',
+            [d.id, d.name, d.category, d.workGroupId || null]
+          );
+        }
+        for (const u of seedUsersHashed) {
+          await mysqlPool.query(
+            'INSERT INTO users (username, password, role, roles, name, category, dept_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE role=VALUES(role)',
+            [u.username, u.password, u.role, JSON.stringify(u.roles || [u.role]), u.name, u.category || 'office', u.deptId, u.status || 'active']
+          );
+        }
+      } catch (e) {
+        console.error('[MySQL] Error resetting users/departments:', e);
+      }
+    }
+
+    const logItem: LogEntry = {
+      id: 'LOG-' + Date.now(),
+      timestamp,
+      username: adminUsername,
+      name: 'ผู้ดูแลระบบ (Superadmin)',
+      actionType: 'delete',
+      module: 'users',
+      description: 'Superadmin สั่งคืนค่าเริ่มต้นบัญชีผู้ใช้งานและโครงสร้างกลุ่มงาน/ฝ่าย'
+    };
+    dbCache.logs = [logItem, ...(dbCache.logs || [])];
+    saveDb({ users: seedUsersHashed, departments: DEPARTMENTS, workGroups: INITIAL_WORK_GROUPS, logs: dbCache.logs });
+    return { success: true, message: 'คืนค่าเริ่มต้นบัญชีผู้ใช้และหน่วยงานสำเร็จ', data: dbCache };
+  }
+
+  if (mode === 'logs') {
+    dbCache.logs = [];
+    if (mysqlPool) {
+      try {
+        await mysqlPool.query('TRUNCATE TABLE system_logs');
+      } catch (e) {
+        console.error('[MySQL] Error truncating system_logs:', e);
+      }
+    }
+    saveDb({ logs: [] });
+    return { success: true, message: 'ล้างประวัติบันทึกการใช้งาน (Audit Logs) ทั้งหมดสำเร็จ', data: dbCache };
+  }
+
+  if (mode === 'factory_reset') {
+    const seedUsersHashed = SEED_USERS.map(u => ({ ...u, password: hashPasswordSync(u.password) }));
+    dbCache = {
+      requests: [],
+      users: seedUsersHashed,
+      departments: DEPARTMENTS,
+      workGroups: INITIAL_WORK_GROUPS,
+      customItems: {},
+      itemPrices: {},
+      materialActive: {},
+      isPlanFrozen: false,
+      fiscalYear: '2569',
+      isCatalogCleared: false,
+      logs: [
+        {
+          id: 'LOG-' + Date.now(),
+          timestamp,
+          username: adminUsername,
+          name: 'ผู้ดูแลระบบ (Superadmin)',
+          actionType: 'other',
+          module: 'system',
+          description: 'ระบบได้รับการรีเซ็ตล้างข้อมูลทั้งหมดคืนค่าโรงงาน (Factory Reset by Superadmin)'
+        }
+      ]
+    };
+
+    if (mysqlPool) {
+      try {
+        await mysqlPool.query('TRUNCATE TABLE requests');
+        await mysqlPool.query('TRUNCATE TABLE users');
+        await mysqlPool.query('TRUNCATE TABLE departments');
+        await mysqlPool.query('TRUNCATE TABLE work_groups');
+        await mysqlPool.query('TRUNCATE TABLE system_logs');
+        await mysqlPool.query('TRUNCATE TABLE system_settings');
+        await mysqlPool.query('TRUNCATE TABLE system_state');
+        
+        await mysqlPool.query(
+          "INSERT INTO system_settings (setting_key, setting_value) VALUES ('migrated_to_relational', 'true'), ('fiscalYear', '2569'), ('isPlanFrozen', 'false') ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value)"
+        );
+
+        for (const wg of INITIAL_WORK_GROUPS) {
+          await mysqlPool.query(
+            'INSERT INTO work_groups (id, name, description, code) VALUES (?, ?, ?, ?)',
+            [wg.id, wg.name, wg.description || '', wg.code || '']
+          );
+        }
+        for (const d of DEPARTMENTS) {
+          await mysqlPool.query(
+            'INSERT INTO departments (id, name, category, work_group_id) VALUES (?, ?, ?, ?)',
+            [d.id, d.name, d.category, d.workGroupId || null]
+          );
+        }
+        for (const u of seedUsersHashed) {
+          await mysqlPool.query(
+            'INSERT INTO users (username, password, role, roles, name, category, dept_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [u.username, u.password, u.role, JSON.stringify(u.roles || [u.role]), u.name, u.category || 'office', u.deptId, u.status || 'active']
+          );
+        }
+      } catch (e) {
+        console.error('[MySQL] Error during factory reset:', e);
+      }
+    }
+
+    try {
+      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(dbCache, null, 2), 'utf-8');
+    } catch (e) {}
+
+    return { success: true, message: 'ล้างระบบทั้งหมดและคืนค่าโรงงานเริ่มต้นสำเร็จสมบูรณ์', data: dbCache };
+  }
+
+  return { success: false, message: 'โหมดคำสั่งไม่ถูกต้อง', data: dbCache };
 }

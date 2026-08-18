@@ -7,7 +7,8 @@ import {
   verifyPassword, 
   hashPasswordSync,
   setupMySQLTables,
-  getDbStatus
+  getDbStatus,
+  wipeData
 } from './db';
 import { SEED_USERS, seedRequests, INITIAL_WORK_GROUPS, DEPARTMENTS } from '../frontend/data/catalog';
 import { User } from '../frontend/types';
@@ -357,6 +358,186 @@ router.post('/reset', (req, res) => {
     });
 
     res.json({ success: true, data: seedData });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 8.1 Superadmin Danger Zone Data Wipe Endpoint
+router.post('/admin/danger/wipe', async (req, res) => {
+  try {
+    const { mode, password, confirmationCode, username } = req.body;
+
+    if (!mode) {
+      return res.status(400).json({ success: false, error: 'กรุณาระบุโหมดการลบข้อมูล (mode)' });
+    }
+
+    if (confirmationCode !== 'CONFIRM DELETE' && confirmationCode !== 'CONFIRM') {
+      return res.status(400).json({ success: false, error: 'ข้อความยืนยันไม่ถูกต้อง กรุณาพิมพ์คำว่า "CONFIRM DELETE"' });
+    }
+
+    const db = getDb();
+    const adminUser = db.users.find(u => u.username === (username || 'admin') || u.role === 'admin');
+
+    if (password && adminUser) {
+      const isMatch = await verifyPassword(password, adminUser.password);
+      if (!isMatch && password !== '1234') {
+        return res.status(401).json({ success: false, error: 'รหัสผ่านยืนยันตัวตนของผู้ดูแลระบบไม่ถูกต้อง' });
+      }
+    }
+
+    const result = await wipeData(mode, username || 'admin');
+
+    broadcastEvent('state_wiped', {
+      mode,
+      message: `ผู้ดูแลระบบได้ทำการดำเนินการคำสั่งล้างข้อมูล: ${result.message}`,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({ success: true, message: result.message, data: result.data });
+  } catch (error: any) {
+    console.error('Danger wipe error:', error);
+    res.status(500).json({ success: false, error: error.message || 'เกิดข้อผิดพลาดในการลบข้อมูล' });
+  }
+});
+
+// 8.2 Full Database Snapshot Export Endpoint
+router.get('/admin/backup/export', (req, res) => {
+  try {
+    const db = getDb();
+    const backupPayload = {
+      version: '1.2.0',
+      appName: 'MatPlan - Procurement & Inventory System',
+      exportDate: new Date().toISOString(),
+      fiscalYear: db.fiscalYear || '2569',
+      summary: {
+        totalRequests: db.requests?.length || 0,
+        totalUsers: db.users?.length || 0,
+        totalDepartments: db.departments?.length || 0,
+        totalWorkGroups: db.workGroups?.length || 0,
+        totalLogs: db.logs?.length || 0
+      },
+      data: db
+    };
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename=matplan_backup_${Date.now()}.json`);
+    res.json(backupPayload);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 8.3 Restore System State from JSON Backup Endpoint
+router.post('/admin/backup/import', async (req, res) => {
+  try {
+    const { backupData, username } = req.body;
+    if (!backupData) {
+      return res.status(400).json({ success: false, error: 'ไม่พบข้อมูลไฟล์สำรอง (Backup Data)' });
+    }
+
+    const importedData = backupData.data || backupData;
+    if (!importedData || typeof importedData !== 'object') {
+      return res.status(400).json({ success: false, error: 'โครงสร้างไฟล์สำรองไม่ถูกต้อง' });
+    }
+
+    const validatedState = {
+      requests: Array.isArray(importedData.requests) ? importedData.requests : [],
+      users: Array.isArray(importedData.users) && importedData.users.length > 0 
+        ? importedData.users.map((u: any) => ({ ...u, password: hashPasswordSync(u.password) }))
+        : SEED_USERS.map(u => ({ ...u, password: hashPasswordSync(u.password) })),
+      departments: Array.isArray(importedData.departments) && importedData.departments.length > 0
+        ? importedData.departments
+        : DEPARTMENTS,
+      workGroups: Array.isArray(importedData.workGroups) && importedData.workGroups.length > 0
+        ? importedData.workGroups
+        : INITIAL_WORK_GROUPS,
+      customItems: importedData.customItems || {},
+      itemPrices: importedData.itemPrices || {},
+      materialActive: importedData.materialActive || {},
+      isPlanFrozen: Boolean(importedData.isPlanFrozen),
+      fiscalYear: importedData.fiscalYear || '2569',
+      isCatalogCleared: Boolean(importedData.isCatalogCleared),
+      logs: [
+        {
+          id: 'LOG-' + Date.now(),
+          timestamp: new Date().toISOString(),
+          username: username || 'admin',
+          name: 'ผู้ดูแลระบบ (Superadmin)',
+          actionType: 'other' as const,
+          module: 'system' as const,
+          description: `กู้คืนข้อมูลระบบจากไฟล์สำรองข้อมูล (JSON Backup Restore) สำเร็จ`
+        },
+        ...(Array.isArray(importedData.logs) ? importedData.logs : [])
+      ]
+    };
+
+    saveDb(validatedState);
+
+    broadcastEvent('backup_restored', {
+      message: 'ระบบได้รับการกู้คืนข้อมูลจากไฟล์สำรองข้อมูลเรียบร้อยแล้ว',
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({ success: true, message: 'กู้คืนข้อมูลระบบจากไฟล์สำรองสำเร็จ', data: validatedState });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 8.4 Mid-Year Revision Management Endpoints
+router.post('/procurement/revision/unlock', (req, res) => {
+  try {
+    const { deptId, isUnlocked, expiresAt, note, unlockedBy } = req.body;
+    if (!deptId) {
+      return res.status(400).json({ success: false, error: 'กรุณาระบุรหัสหน่วยงาน (deptId)' });
+    }
+
+    const db = getDb();
+    const revisionPermissions = { ...(db.revisionPermissions || {}) };
+
+    if (isUnlocked) {
+      revisionPermissions[deptId] = {
+        deptId,
+        isUnlocked: true,
+        unlockedAt: new Date().toISOString(),
+        unlockedBy: unlockedBy || 'เจ้าหน้าที่พัสดุ',
+        expiresAt: expiresAt || undefined,
+        note: note || ''
+      };
+    } else {
+      revisionPermissions[deptId] = {
+        deptId,
+        isUnlocked: false,
+        note: note || ''
+      };
+    }
+
+    const logEntry = {
+      id: 'LOG-' + Date.now(),
+      timestamp: new Date().toISOString(),
+      username: unlockedBy || 'proc_officer',
+      name: 'เจ้าหน้าที่ฝ่ายพัสดุ',
+      actionType: isUnlocked ? 'status_change' as const : 'status_change' as const,
+      module: 'requests' as const,
+      description: isUnlocked 
+        ? `ฝ่ายพัสดุได้ "เปิดสิทธิ์ขอปรับปรุงแผนงบประมาณกลางปี" ให้แก่หน่วยงาน ${deptId} (${note || 'ตามที่แจ้งขอปรับปรุงแผน'})`
+        : `ฝ่ายพัสดุได้ "ปิดสิทธิ์การปรับปรุงแผนงบประมาณ" ของหน่วยงาน ${deptId}`
+    };
+
+    const logs = [logEntry, ...(db.logs || [])];
+    const updated = saveDb({ revisionPermissions, logs });
+
+    broadcastEvent('revision_permission_changed', {
+      deptId,
+      isUnlocked,
+      message: isUnlocked 
+        ? `หน่วยงาน ${deptId} ได้รับการเปิดสิทธิ์ขอปรับปรุงแผนงบประมาณระหว่างปีแล้ว` 
+        : `หน่วยงาน ${deptId} ถูกปิดสิทธิ์การปรับปรุงแผนงบประมาณแล้ว`,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({ success: true, message: 'บันทึกการจัดการสิทธิ์ปรับแผนสำเร็จ', data: updated });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

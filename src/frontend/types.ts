@@ -45,6 +45,15 @@ export interface MaterialItem {
   isCustom?: boolean;
 }
 
+export interface DepartmentRevisionPermission {
+  deptId: string;
+  isUnlocked: boolean;
+  unlockedAt?: string;
+  unlockedBy?: string;
+  expiresAt?: string;
+  note?: string;
+}
+
 export interface RequestItem {
   id: string;
   deptId: string;
@@ -75,6 +84,15 @@ export interface RequestItem {
   rejectedByRole?: UserRole;
   rejectedByName?: string;
   rejectedAt?: string;
+
+  // Mid-Year Revision Plan tracking
+  isRevisionItem?: boolean;          // True if this is an adjustment or newly added revision item
+  revisionType?: 'add' | 'modify' | 'cancel' | 'none'; // Item revision action
+  revisionBaseQty?: number;          // Original approved quantity before revision
+  revisionReason?: string;           // Reason for adjusting the mid-year plan
+  revisionStatus?: 'draft' | 'submitted' | 'approved' | 'rejected'; // Revision specific workflow status
+  revisionRequestedAt?: string;
+  revisionRequestedBy?: string;
 }
 
 export interface HistoryData {

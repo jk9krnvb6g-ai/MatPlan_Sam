@@ -7,15 +7,39 @@ import {
   CATEGORY_ORDER, 
   fmtBaht, 
   guessPrice, 
-  guessUnit,
+  guessUnit, 
   getCustomCategories,
   saveCustomCategory,
-  deleteCustomCategory
+  deleteCustomCategory,
+  getCategoryLabel
 } from '../data/catalog';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption, CATEGORY_BUTTON_STYLES } from './TableControlPanel';
 import { sortItems } from '../utils/sortHelper';
-import { Package, Plus, Edit3, Power, Check, X, ShieldAlert, ArrowUpDown, FolderPlus, Trash2, Tag, ListFilter } from 'lucide-react';
+import { 
+  Package, 
+  Plus, 
+  Edit3, 
+  Power, 
+  Check, 
+  X, 
+  ShieldAlert, 
+  ArrowUpDown, 
+  FolderPlus, 
+  Trash2, 
+  Tag, 
+  ListFilter,
+  FileSpreadsheet,
+  Download,
+  Upload,
+  AlertCircle,
+  FileCheck
+} from 'lucide-react';
+import { 
+  exportMaterialsCatalogExcel, 
+  downloadMaterialSampleTemplateExcel, 
+  parseMaterialExcel 
+} from '../utils/excelHelper';
 
 interface AdminMaterialsViewProps {
   customItems: Record<string, string[]>;
@@ -30,6 +54,7 @@ interface AdminMaterialsViewProps {
   onToastAlert: (msg: string, type?: 'success' | 'error' | 'info') => void;
   onAddCustomCategory?: (key: string, label: string) => void;
   onDeleteCustomCategory?: (key: string, label: string) => void;
+  onBulkImportMaterials?: (items: MaterialItem[]) => void;
 }
 
 export const AdminMaterialsView: React.FC<AdminMaterialsViewProps> = ({
@@ -44,7 +69,8 @@ export const AdminMaterialsView: React.FC<AdminMaterialsViewProps> = ({
   onRequestConfirm,
   onToastAlert,
   onAddCustomCategory,
-  onDeleteCustomCategory
+  onDeleteCustomCategory,
+  onBulkImportMaterials
 }) => {
   const [filterCategory, setFilterCategory] = useState<CategoryId | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -76,6 +102,12 @@ export const AdminMaterialsView: React.FC<AdminMaterialsViewProps> = ({
   const [categoriesVersion, setCategoriesVersion] = useState(0);
   const [customCatKey, setCustomCatKey] = useState('');
   const [customCatLabel, setCustomCatLabel] = useState('');
+
+  // Excel Import States
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importedPreviewItems, setImportedPreviewItems] = useState<MaterialItem[]>([]);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [isParsingExcel, setIsParsingExcel] = useState(false);
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -266,6 +298,40 @@ export const AdminMaterialsView: React.FC<AdminMaterialsViewProps> = ({
     });
   };
 
+  // Excel handlers
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsParsingExcel(true);
+    const result = await parseMaterialExcel(file);
+    setIsParsingExcel(false);
+
+    if (result.success && result.items.length > 0) {
+      setImportedPreviewItems(result.items);
+      setImportErrors(result.errors);
+      setShowImportModal(true);
+    } else {
+      onToastAlert(result.errors.join(', ') || 'ไม่พบข้อมูลที่ถูกต้องในไฟล์ Excel', 'error');
+    }
+    e.target.value = '';
+  };
+
+  const handleConfirmImport = () => {
+    if (importedPreviewItems.length === 0) return;
+    if (onBulkImportMaterials) {
+      onBulkImportMaterials(importedPreviewItems);
+    } else {
+      importedPreviewItems.forEach(item => {
+        onAddMaterial(item.category, item.name, item.unit, item.price);
+      });
+    }
+    onToastAlert(`นำเข้ารายการวัสดุสำเร็จจำนวน ${importedPreviewItems.length} รายการ`, 'success');
+    setShowImportModal(false);
+    setImportedPreviewItems([]);
+    setImportErrors([]);
+  };
+
   // Pagination slice
   const numericSize = pageSize === 'all' ? sortedList.length || 1 : pageSize;
   const totalPages = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(sortedList.length / numericSize));
@@ -305,6 +371,140 @@ export const AdminMaterialsView: React.FC<AdminMaterialsViewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Excel Material Catalog Import/Export Card */}
+      <div className="bg-white border border-emerald-200 rounded-2xl p-4 shadow-sm space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-100">
+              <FileSpreadsheet className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">
+                นำเข้าและส่งออกแคตตาล็อกวัสดุด้วยไฟล์ Excel (.xlsx)
+              </h3>
+              <p className="text-xs text-slate-500">
+                เพิ่มรายการวัสดุและราคากลางแบบเป็นชุด (Bulk Import) หรือส่งออกข้อมูลรายการวัสดุทั้งหมด
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => exportMaterialsCatalogExcel(customItems, itemPrices, materialActive)}
+              className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs"
+            >
+              <Download className="w-4 h-4" />
+              ส่งออกแคตตาล็อก (.xlsx)
+            </button>
+
+            <button
+              type="button"
+              onClick={() => downloadMaterialSampleTemplateExcel()}
+              className="px-3 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs"
+            >
+              <Download className="w-4 h-4 text-slate-500" />
+              ดาวน์โหลดฟอร์มตัวอย่าง
+            </button>
+
+            <label className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95">
+              <Upload className="w-4 h-4" />
+              <span>{isParsingExcel ? 'กำลังอ่านไฟล์...' : 'นำเข้าจาก Excel (.xlsx)'}</span>
+              <input
+                type="file"
+                accept=".xlsx, .xls"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal Preview Imported Materials */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-300 rounded-3xl shadow-2xl max-w-3xl w-full p-6 space-y-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
+                <FileCheck className="w-5 h-5 text-emerald-600" />
+                ตรวจสอบรายการก่อนนำเข้าสู่ระบบ (พบ {importedPreviewItems.length} รายการ)
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowImportModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {importErrors.length > 0 && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-1">
+                <div className="font-bold flex items-center gap-1">
+                  <AlertCircle className="w-4 h-4" />
+                  ข้อความแจ้งเตือนบางแถว ({importErrors.length} รายการ):
+                </div>
+                <div className="max-h-24 overflow-y-auto pl-5 list-disc text-[11px]">
+                  {importErrors.map((err, i) => <div key={i}>• {err}</div>)}
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto border border-slate-200 rounded-2xl">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-50 font-bold text-slate-700 border-b border-slate-200 sticky top-0">
+                  <tr>
+                    <th className="p-2.5 text-center w-12">#</th>
+                    <th className="p-2.5">หมวดหมู่</th>
+                    <th className="p-2.5">ชื่อรายการ</th>
+                    <th className="p-2.5">หน่วยนับ</th>
+                    <th className="p-2.5 text-right">ราคาต่อหน่วย</th>
+                    <th className="p-2.5 text-center">สถานะ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {importedPreviewItems.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50">
+                      <td className="p-2.5 text-center text-slate-400 font-mono">{idx + 1}</td>
+                      <td className="p-2.5"><CategoryBadge category={item.category} /></td>
+                      <td className="p-2.5 font-bold text-slate-800">{item.name}</td>
+                      <td className="p-2.5 text-slate-600">{item.unit}</td>
+                      <td className="p-2.5 text-right font-mono font-bold text-emerald-800">{fmtBaht(item.price)} บ.</td>
+                      <td className="p-2.5 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          item.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          {item.active ? 'ใช้งาน' : 'ปิด'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => setShowImportModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmImport}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                ยืนยันนำเข้า {importedPreviewItems.length} รายการ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Category Management Card */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-4">

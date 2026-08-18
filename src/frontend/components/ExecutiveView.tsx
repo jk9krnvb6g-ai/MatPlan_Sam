@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
-import { RequestItem, User, CategoryId } from '../types';
+import { RequestItem, User, CategoryId, Department, WorkGroup } from '../types';
 import { CategoryBadge } from './CategoryBadge';
 import { PieChart as RechartsPie, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
 import { 
@@ -13,12 +13,14 @@ import {
   CATEGORY_LABELS,
   CATEGORY_ORDER,
   getItemCategory,
-  guessUnit
+  guessUnit,
+  INITIAL_WORK_GROUPS
 } from '../data/catalog';
 import { CompareGrid } from './CompareGrid';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption, CATEGORY_BUTTON_STYLES } from './TableControlPanel';
 import { sortItems } from '../utils/sortHelper';
+import { exportProcurementPlanExcel } from '../utils/excelHelper';
 import { 
   Info, 
   Briefcase, 
@@ -54,10 +56,12 @@ import {
 } from 'lucide-react';
 
 interface ExecutiveViewProps {
-  currentUser: User;
+  currentUser: User | null;
   requests: RequestItem[];
   itemPrices: Record<string, number>;
   fiscalYear: string;
+  departments?: Department[];
+  workGroups?: WorkGroup[];
   onApproveFinalBudget: (ids: string[]) => void;
   onRejectBack: (id: string, comment: string) => void;
   onApproveAllFinal: () => void;
@@ -73,6 +77,8 @@ export const ExecutiveView: React.FC<ExecutiveViewProps> = ({
   requests,
   itemPrices,
   fiscalYear,
+  departments = DEPARTMENTS,
+  workGroups = INITIAL_WORK_GROUPS,
   onApproveFinalBudget,
   onRejectBack,
   onApproveAllFinal,
@@ -82,7 +88,7 @@ export const ExecutiveView: React.FC<ExecutiveViewProps> = ({
   onRequestConfirm,
   onToastAlert
 }) => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pending' | 'approved' | 'compare' | 'approved-summary' | 'rejected'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pending' | 'approved' | 'compare' | 'approved-summary' | 'rejected' | 'revision-review'>('dashboard');
   const [comments, setComments] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'itemName' | 'deptId' | 'qtyRequested' | 'price' | 'lineBudget'>('itemName');
@@ -616,86 +622,125 @@ export const ExecutiveView: React.FC<ExecutiveViewProps> = ({
 
   return (
     <div className="space-y-5">
-      {/* Tabs */}
-      <div className="flex bg-slate-200/80 p-1 rounded-2xl gap-1 text-xs font-semibold w-fit flex-wrap">
-        <button
-          type="button"
-          onClick={() => setActiveTab('dashboard')}
-          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
-            activeTab === 'dashboard'
-              ? 'bg-white text-slate-900 shadow-sm font-bold'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <PieChart className="w-4 h-4 text-indigo-600" />
-          แดชบอร์ดภาพรวมผู้บริหาร
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('pending')}
-          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
-            activeTab === 'pending'
-              ? 'bg-white text-slate-900 shadow-sm font-bold'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Briefcase className="w-4 h-4 text-indigo-600" />
-          รออนุมัติงบประมาณ ({filteredPending.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('approved')}
-          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
-            activeTab === 'approved'
-              ? 'bg-white text-slate-900 shadow-sm font-bold'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <CheckCheck className="w-4 h-4 text-emerald-600" />
-          รายการที่ผู้บริหารอนุมัติเรียบร้อยแล้ว ({approvedRequests.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('approved-summary');
-            setApprovedPage(1);
-          }}
-          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
-            activeTab === 'approved-summary'
-              ? 'bg-white text-slate-900 shadow-sm font-bold'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <Calendar className="w-4 h-4 text-amber-600" />
-          สรุปรายการอนุมัติ & ส่งออกข้อมูล
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('rejected');
-            setRejectedCurrentPage(1);
-          }}
-          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
-            activeTab === 'rejected'
-              ? 'bg-white text-slate-900 shadow-sm font-bold'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <AlertCircle className="w-4 h-4 text-rose-600" />
-          รายการที่ถูกตีกลับ ({rejectedRequests.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('compare')}
-          className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
-            activeTab === 'compare'
-              ? 'bg-white text-slate-900 shadow-sm font-bold'
-              : 'text-slate-600 hover:text-slate-900'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4 text-indigo-600" />
-          เปรียบเทียบย้อนหลัง 5 ปี
-        </button>
+      {/* Top Controls & Action Bar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs">
+        {/* Tabs */}
+        <div className="flex bg-slate-200/80 p-1 rounded-xl gap-1 text-xs font-semibold w-fit flex-wrap">
+          <button
+            type="button"
+            onClick={() => setActiveTab('dashboard')}
+            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-2 ${
+              activeTab === 'dashboard'
+                ? 'bg-white text-slate-900 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <PieChart className="w-4 h-4 text-indigo-600" />
+            แดชบอร์ดภาพรวมผู้บริหาร
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('pending')}
+            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-2 ${
+              activeTab === 'pending'
+                ? 'bg-white text-slate-900 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Briefcase className="w-4 h-4 text-indigo-600" />
+            รออนุมัติงบประมาณ ({filteredPending.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('approved')}
+            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-2 ${
+              activeTab === 'approved'
+                ? 'bg-white text-slate-900 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <CheckCheck className="w-4 h-4 text-emerald-600" />
+            รายการที่ผู้บริหารอนุมัติเรียบร้อยแล้ว ({approvedRequests.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('approved-summary');
+              setApprovedPage(1);
+            }}
+            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-2 ${
+              activeTab === 'approved-summary'
+                ? 'bg-white text-slate-900 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Calendar className="w-4 h-4 text-amber-600" />
+            สรุปรายการอนุมัติ & ส่งออกข้อมูล
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('rejected');
+              setRejectedCurrentPage(1);
+            }}
+            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-2 ${
+              activeTab === 'rejected'
+                ? 'bg-white text-slate-900 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <AlertCircle className="w-4 h-4 text-rose-600" />
+            รายการที่ถูกตีกลับ ({rejectedRequests.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('compare')}
+            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-2 ${
+              activeTab === 'compare'
+                ? 'bg-white text-slate-900 shadow-xs font-bold'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-indigo-600" />
+            เปรียบเทียบย้อนหลัง 5 ปี
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('revision-review')}
+            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-2 ${
+              activeTab === 'revision-review'
+                ? 'bg-amber-500 text-slate-950 shadow-xs font-bold'
+                : requests.some(r => r.isRevisionItem)
+                ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 font-bold animate-pulse'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-700" />
+            <span>พิจารณาปรับปรุงแผนรอบ 6 เดือน ({requests.filter(r => r.isRevisionItem).length})</span>
+          </button>
+        </div>
+
+        {/* Global Export Buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => exportProcurementPlanExcel(requests, itemPrices, departments, workGroups, fiscalYear)}
+            className="px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
+            title="ส่งออกแผนจัดหาพัสดุและงบประมาณเป็นไฟล์ Excel"
+          >
+            <Download className="w-4 h-4 text-emerald-700" />
+            <span>ส่งออกแผนจัดหา (.xlsx)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenReportModal}
+            className="px-3.5 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-95"
+          >
+            <Printer className="w-4 h-4 text-teal-700" />
+            <span>พิมพ์รายงานสรุปทางการ</span>
+          </button>
+        </div>
       </div>
 
       {activeTab === 'dashboard' && (
@@ -2413,6 +2458,137 @@ export const ExecutiveView: React.FC<ExecutiveViewProps> = ({
               onPageSizeChange={s => { setRejectedPageSize(s); setRejectedCurrentPage(1); }}
               onPageChange={p => setRejectedCurrentPage(p)}
             />
+          )}
+        </div>
+      )}
+
+      {/* TAB 7: พิจารณาปรับปรุงแผนงบประมาณรอบ 6 เดือน (REVISION REVIEW) */}
+      {activeTab === 'revision-review' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-6 text-white shadow-md">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 text-white text-xs font-bold backdrop-blur-xs">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+                  การพิจารณาคำขอปรับปรุงแผนงบประมาณรอบ 6 เดือน (Executive Mid-Year Review)
+                </div>
+                <h2 className="text-xl md:text-2xl font-bold">
+                  ตารางเปรียบเทียบ แผนเดิม vs แผนที่ขอปรับปรุงใหม่
+                </h2>
+                <p className="text-xs md:text-sm text-amber-100 max-w-3xl leading-relaxed">
+                  ตรวจสอบผลต่างจำนวนและงบประมาณที่เพิ่มขึ้นหรือลดลงของแต่ละหน่วยงาน พร้อมอนุมัติหรือตีกลับรายการปรับปรุงแผน
+                </p>
+              </div>
+
+              <div className="bg-white/10 backdrop-blur-md border border-white/25 rounded-2xl p-4 text-xs space-y-1 self-start md:self-auto min-w-[220px]">
+                <div className="text-amber-100 font-medium">รายการที่ขอปรับแผนทั้งหมด:</div>
+                <div className="text-2xl font-black text-white font-mono">
+                  {requests.filter(r => r.isRevisionItem).length} <span className="text-xs font-normal">รายการ</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {requests.filter(r => r.isRevisionItem).length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center space-y-3 shadow-sm">
+              <div className="w-16 h-16 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mx-auto">
+                <CheckCheck className="w-8 h-8" />
+              </div>
+              <h3 className="font-bold text-slate-800 text-base">ไม่มีรายการขอปรับปรุงแผนงบประมาณที่รอการพิจารณา</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                เมื่อฝ่ายพัสดุเปิดสิทธิ์และหน่วยงานยื่นคำขอปรับเพิ่ม/ลดรายการรอบ 6 เดือน รายการจะปรากฏในตารางนี้เพื่อให้ท่านพิจารณาอนุมัติ
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
+              <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                      <th className="p-3 w-10 text-center">ลำดับ</th>
+                      <th className="p-3">หน่วยงาน</th>
+                      <th className="p-3">รายการวัสดุ</th>
+                      <th className="p-3 text-center w-20">ประเภทปรับ</th>
+                      <th className="p-3 text-right w-24">ยอดเดิม</th>
+                      <th className="p-3 text-right w-24">ยอดขอใหม่</th>
+                      <th className="p-3 text-center w-24">ผลต่าง (+/-)</th>
+                      <th className="p-3 text-right w-28">งบประมาณผลต่าง</th>
+                      <th className="p-3">เหตุผลความจำเป็น</th>
+                      <th className="p-3 text-center w-28">การตัดสินใจ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {requests
+                      .filter(r => r.isRevisionItem)
+                      .map((r, idx) => {
+                        const baseQty = r.revisionBaseQty ?? r.qtyOriginal ?? 0;
+                        const newQty = r.qtyRequested;
+                        const diffQty = newQty - baseQty;
+                        const price = calcUnitPrice(r);
+                        const diffBudget = diffQty * price;
+
+                        return (
+                          <tr key={r.id} className="hover:bg-slate-50/70">
+                            <td className="p-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                            <td className="p-3 font-bold text-slate-800">{deptName(r.deptId)}</td>
+                            <td className="p-3 font-bold text-slate-900">{r.itemName}</td>
+                            <td className="p-3 text-center">
+                              {r.revisionType === 'add' ? (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">เพิ่มใหม่</span>
+                              ) : r.revisionType === 'cancel' ? (
+                                <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold">ขอยกเลิก</span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">ปรับยอด</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold text-slate-500">{baseQty}</td>
+                            <td className="p-3 text-right font-mono font-bold text-slate-900">{newQty}</td>
+                            <td className="p-3 text-center font-mono font-bold">
+                              {diffQty > 0 ? (
+                                <span className="text-emerald-600">+{diffQty}</span>
+                              ) : diffQty < 0 ? (
+                                <span className="text-rose-600">{diffQty}</span>
+                              ) : (
+                                <span className="text-slate-400">0</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-right font-mono font-bold">
+                              {diffBudget > 0 ? (
+                                <span className="text-emerald-600">+{fmtBaht(diffBudget)} ฿</span>
+                              ) : diffBudget < 0 ? (
+                                <span className="text-rose-600">{fmtBaht(diffBudget)} ฿</span>
+                              ) : (
+                                <span className="text-slate-400">0 ฿</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-slate-600 text-xs">{r.revisionReason || r.reason || '-'}</td>
+                            <td className="p-3 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleApproveSingle(r)}
+                                  className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-all shadow-2xs"
+                                  title="อนุมัติการปรับแผนรายการนี้"
+                                >
+                                  <CheckCheck className="w-4 h-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRejectSingle(r)}
+                                  className="p-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-all shadow-2xs"
+                                  title="ตีกลับรายการนี้"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
         </div>
       )}
