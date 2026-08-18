@@ -260,7 +260,35 @@ router.get('/state', async (req, res) => {
   try {
     const db = getDb();
     const dbStatus = await getDbStatus();
-    res.json({ success: true, data: db, dbStatus });
+    // Security hardening: sanitize user password hashes before sending payload to client
+    const sanitizedUsers = (db.users || []).map(u => {
+      const { password, ...safeUser } = u;
+      return { ...safeUser, password: '' };
+    });
+    res.json({ success: true, data: { ...db, users: sanitizedUsers }, dbStatus });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 5.1 Get Item Audit History Endpoint (Auditor & Procurement Trail)
+router.get('/requests/:id/history', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+    const requestItem = (db.requests || []).find(r => r.id === id);
+    if (!requestItem) {
+      return res.status(404).json({ success: false, error: 'ไม่พบรายการคำขอนี้ในระบบ' });
+    }
+
+    res.json({
+      success: true,
+      requestId: id,
+      itemName: requestItem.itemName,
+      deptId: requestItem.deptId,
+      status: requestItem.status,
+      auditLogs: requestItem.auditLogs || []
+    });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

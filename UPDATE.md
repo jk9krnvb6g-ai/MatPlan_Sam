@@ -1,249 +1,147 @@
-# คู่มือการอัปเดตระบบจัดซื้อวัสดุพัสดุ - เวอร์ชัน 1.5 (System Update Guide v1.5)
+# คู่มือการอัปเดตระบบจัดซื้อวัสดุพัสดุ - เวอร์ชัน 1.19 (System Update Guide v1.19)
 
-เอกสารฉบับนี้สรุปขั้นตอนการอัปเดตระบบขึ้นสู่ **เวอร์ชัน 1.5 (Version 1.5)** ที่มีการเพิ่มป้ายแสดงเลขเวอร์ชัน **`Live Sync v1.5`** ในแถบเมนูหลักของระบบ พร้อมระบบ **Real-time Cross-Device Auto Sync** ป้องกันการบันทึกข้อมูลทับจากเบราว์เซอร์อื่น และการรีเฟรชข้อมูลอัตโนมัติ 5 วินาที / เมื่อสลับแท็บกลับมาใช้งาน
+เอกสารฉบับนี้สรุปขั้นตอนการอัปเดตระบบขึ้นสู่ **เวอร์ชัน 1.19 (Version 1.19)** ซึ่งมาพร้อมกับ:
+1. **Relational Database Schema เต็มรูปแบบ**: แยกตารางจริง 10 ตาราง (`requests`, `users`, `departments`, `work_groups`, `request_audit_logs`, `custom_categories`, `custom_units`, `system_logs`, `system_settings`, `system_state`)
+2. **ระบบรักษาความปลอดภัยรหัสผ่าน (Password Security)**: เข้ารหัสผ่านทางเดียวด้วย `Bcrypt` (10 Salt Rounds) พร้อมตัดรหัสผ่านออกจาก Payload ข้อมูลที่ส่งให้ Client ทั้งหมด
+3. **ระบบตรวจสอบย้อนหลังระดับฟิลด์ (Government Procurement Audit Trail)**: ตาราง `request_audit_logs` บันทึกค่าเดิม $\rightarrow$ ค่าใหม่ (Before/After Diff), เหตุผล, ข้อคิดเห็น, ผู้กระทำ, เวลา และเปิด API `GET /api/requests/:id/history`
+4. **ระบบหมวดหมู่และหน่วยนับไดนามิก (Custom Categories & Units)**: รองรับการเพิ่มหมวดหมู่ใหม่และการผูกหน่วยนับเฉพาะของแต่ละรายการในฐานข้อมูล MySQL โดยตรง
 
 ---
 
 ## สารบัญ (Table of Contents)
-1. [ภาพรวมการอัปเดตและการจัดการฐานข้อมูล MySQL](#1-ภาพรวมการอัปเดตและการจัดการฐานข้อมูล-mysql)
-2. [สิ่งที่เปลี่ยนแปลงในฐานข้อมูล (Database Schema Changes)](#2-สิ่งที่เปลี่ยนแปลงในฐานข้อมูล-database-schema-changes)
-3. [ขั้นตอนการอัปเดตระบบแบบ Step-by-Step](#3-ขั้นตอนการอัปเดตระบบแบบ-step-by-step)
+1. [สิ่งที่เปลี่ยนแปลงในฐานข้อมูล (Database Schema v1.19)](#1-สิ่งที่เปลี่ยนแปลงในฐานข้อมูล-database-schema-v119)
+2. [ขั้นตอนการอัปเดตระบบแบบ Step-by-Step](#2-ขั้นตอนการอัปเดตระบบแบบ-step-by-step)
+3. [การตั้งค่า Environment Variables (`.env`)](#3-การตั้งค่า-environment-variables-env)
 4. [การตรวจสอบความถูกต้องหลังอัปเดต (Verification & Health Check)](#4-การตรวจสอบความถูกต้องหลังอัปเดต-verification--health-check)
-5. [การรับมือและแก้ไขปัญหาหากเกิดข้อผิดพลาด (Troubleshooting & Rollback)](#5-การรับมือและแก้ไขปัญหาหากเกิดข้อผิดพลาด-troubleshooting--rollback)
+5. [การรับมือและแก้ไขปัญหา (Troubleshooting & Rollback)](#5-การรับมือและแก้ไขปัญหา-troubleshooting--rollback)
 
 ---
 
-## 1. ภาพรวมการอัปเดตและการจัดการฐานข้อมูล MySQL
+## 1. สิ่งที่เปลี่ยนแปลงในฐานข้อมูล (Database Schema v1.19)
 
-ในระบบเดิม ฐานข้อมูล `MatPlan` บนเครื่องเซิร์ฟเวอร์ MySQL (`10.1.0.201`) มีเพียงตารางเดียวคือ `system_state`
+ระบบมีกลไก **Automatic Schema Migration & Synchronization** ในตัว เมื่อเริ่มรันระบบ ตัวแอปจะตรวจสอบและสร้าง/อัปเกรดตารางทั้งหมดให้อัตโนมัติ:
 
-**ข่าวดีในการอัปเดตเวอร์ชันนี้:**
-* **ไม่ต้องรัน SQL Script สร้างตารางใหม่ด้วยตนเอง!** 
-* ตัวแอปพลิเคชันเวอร์ชันใหม่มีระบบ **Auto-Database Migration & Initialization** ในตัว
-* เมื่อรันเซิร์ฟเวอร์ Node.js แอปพลิเคชันจะตรวจสอบตารางในฐานข้อมูล `MatPlan` โดยอัตโนมัติ หากยังไม่มีตารางใหม่ ระบบจะสั่ง `CREATE TABLE` และดึงข้อมูลสถานะเดิมจากตาราง `system_state` มาจำแนกแจกแจงโครงสร้าง และบันทึกเข้าสู่ตารางใหม่ (ผู้ใช้งานเริ่มต้น, ฝ่าย/กลุ่มงาน, รายการคำขอ) ให้ทันทีโดยอัตโนมัติ โดยตาราง `system_state` เดิมยังคงอยู่และไม่ถูกทำลายข้อมูล
-
----
-
-## 2. สิ่งที่เปลี่ยนแปลงในฐานข้อมูล (Database Schema Changes)
-
-| ชื่อตาราง (Table Name) | สถานะ | รายละเอียด |
+| ชื่อตาราง (Table Name) | ลักษณะการทำงาน | วัตถุประสงค์ |
 | :--- | :--- | :--- |
-| `system_state` | **มีอยู่เดิม (คงไว้)** | ตารางเก็บข้อมูลสถานะรวมและปีงบประมาณเดิม |
-| `users` | **สร้างใหม่อัตโนมัติ** | ตารางเก็บข้อมูลผู้ใช้งาน, รหัสผ่าน (Hashed) และสิทธิ์ (Admin, Procurement, Dept Head, Exec) |
-| `requests` | **สร้างใหม่อัตโนมัติ** | ตารางเก็บรายการคำขอพัสดุรายชิ้น รองรับการค้นหาแบบ Server-side Pagination |
-| `departments` | **สร้างใหม่อัตโนมัติ** | ตารางเก็บรายชื่อแผนก/กลุ่มงาน และงบประมาณที่ได้รับจัดสรร |
-| `work_groups` | **สร้างใหม่อัตโนมัติ** | ตารางเก็บข้อมูลกลุ่มงาน |
-| `system_logs` | **สร้างใหม่อัตโนมัติ** | ตารางเก็บบันทึกประวัติการใช้งาน (Audit Trail) |
+| `requests` | **Relational Table** | บันทึกรายการคำขอแผนความต้องการพัสดุ รองรับ Pagination |
+| `request_audit_logs` | **ตารางใหม่ (New)** | บันทึกประวัติการเปลี่ยนแปลงแก้ไขรายบรรทัด (Before/After Diff) ตามระเบียบพัสดุ |
+| `users` | **Relational Table** | ข้อมูลผู้ใช้งานและสิทธิ์ เข้ารหัสผ่านด้วย Bcrypt One-Way Hash |
+| `departments` | **Relational Table** | ข้อมูลฝ่าย/แผนก และการจัดสรรกลุ่มงาน |
+| `work_groups` | **Relational Table** | ข้อมูลกลุ่มงานหลัก |
+| `custom_categories` | **ตารางใหม่ (New)** | จัดเก็บหมวดหมู่วัสดุที่ผู้ใช้งานเพิ่มใหม่ในแค็ตตาล็อกกลาง |
+| `custom_units` | **ตารางใหม่ (New)** | จัดเก็บหน่วยนับเฉพาะของแต่ละรายการพัสดุ |
+| `system_logs` | **Relational Table** | บันทึกเหตุการณ์ระดับระบบ |
+| `system_settings` | **Relational Table** | บันทึกค่าตั้งค่าระบบ (แช่แข็งแผน, สิทธิ์ปรับปรุงแผนกลางปี, ราคาประเมิน) |
+| `system_state` | **Compatibility** | บันทึกสถานะรวมเพื่อความเข้ากันได้ย้อนหลัง |
 
 ---
 
-## 3. ขั้นตอนการอัปเดตระบบแบบ Step-by-Step
+## 2. ขั้นตอนการอัปเดตระบบแบบ Step-by-Step
 
-### ขั้นตอนที่ 1: สำรองข้อมูลเดิม (Backup Data)
-ก่อนดำเนินการอัปเดต ให้ทำการสำรองข้อมูลฐานข้อมูลเดิมไว้เพื่อความปลอดภัย
+### ขั้นตอนที่ 1: สำรองข้อมูลเดิม (Backup Database & .env)
+```bash
+# 1. เข้าเครื่องฐานข้อมูล MySQL (10.1.0.201 หรือเครื่องของท่าน)
+mysqldump -u root -p MatPlan > backup_matplan_before_v1_19.sql
 
-1. ล็อกอินเข้าเครื่องเซิร์ฟเวอร์ MySQL (`10.1.0.201`) หรือใช้โปรแกรมจัดการฐานข้อมูล (เช่น Navicat, DBeaver, HeidiSQL)
-2. รันคำสั่งส่งออกฐานข้อมูล (Dump Database):
-   ```bash
-   mysqldump -u root -p MatPlan > backup_matplan_before_update.sql
-   ```
-3. สำรองไฟล์ `.env` เดิมบนเครื่อง Application Server ไว้ด้วย
-
----
-
-### ขั้นตอนที่ 2: ดึงซอร์สโค้ดเวอร์ชันใหม่ลงเครื่อง Application Server (`10.1.0.15` หรือเครื่องหลัก)
-
-1. เข้าไปที่ไดเรกทอรีโครงการบนเครื่อง Application Server:
-   ```bash
-   cd /var/www/MatPlan   # หรือโฟลเดอร์ที่ติดตั้งแอปพลิเคชันไว้
-   ```
-2. ดึงโค้ดอัปเดตใหม่ล่าสุด (ผ่าน Git หรือคัดลอกไฟล์ซอร์สโค้ดใหม่ทับโฟลเดอร์เดิม)
-   ```bash
-   git pull origin main
-   ```
+# 2. สำรองไฟล์ .env เดิม
+cp /var/www/MatPlan/.env /var/www/MatPlan/.env.backup
+```
 
 ---
 
-### ขั้นตอนที่ 3: ตรวจสอบและอัปเดตไฟล์ `.env`
+### ขั้นตอนที่ 2: ดึงซอร์สโค้ดเวอร์ชัน 1.19 ลงเครื่อง Application Server
+```bash
+cd /var/www/MatPlan
+git pull origin main
+```
 
-เปิดไฟล์ `.env` บนเครื่อง Application Server เพื่อกำหนดค่าพอร์ตและการเชื่อมต่อฐานข้อมูล:
+---
+
+### ขั้นตอนที่ 3: ติดตั้ง Dependencies และ Build ระบบใหม่
+```bash
+# ติดตั้งไลบรารีใหม่ (รวมถึง bcryptjs, jsonwebtoken)
+npm install
+
+# คอมไพล์โปรเจกต์ (สร้าง dist/ และ dist/server.cjs)
+npm run build
+```
+
+---
+
+### ขั้นตอนที่ 4: รีสตาร์ตกระบวนการทำงาน PM2 ด้วย Bundle ใหม่
+
+> ⚠️ **คำเตือนสำคัญ:** ห้ามใช้ `pm2 restart` เพียงอย่างเดียว ให้ใช้คำสั่งลบและเริ่มใหม่ตามนี้:
+
+```bash
+# 1. ตรวจสอบชื่อโปรเซสเดิม
+pm2 status
+
+# 2. ลบโปรเซสเดิม
+pm2 delete MatPlan
+
+# 3. เริ่มต้นใหม่ด้วย dist/server.cjs
+pm2 start dist/server.cjs --name MatPlan
+
+# 4. บันทึกการตั้งค่า PM2
+pm2 save
+
+# 5. ลบไฟล์ server.js เก่า (หากมี) ใน root เพื่อป้องกันความสับสน
+rm -f server.js
+```
+
+---
+
+## 3. การตั้งค่า Environment Variables (`.env`)
+
+ตรวจสอบไฟล์ `/var/www/MatPlan/.env` ให้มีค่าดังนี้:
 
 ```env
 PORT=3005
 APP_URL="http://10.2.0.15:3000/MatPlan"
 
-# การเชื่อมต่อฐานข้อมูล MySQL (10.2.0.201)
+# การเชื่อมต่อฐานข้อมูล MySQL
 DB_HOST=10.2.0.201
 DB_PORT=3306
 DB_USER=MatPlan
 DB_PASS=your_secure_password
 DB_NAME=MatPlan
 
-# ความปลอดภัย JWT (คีย์สำหรับการเข้ารหัส Token)
+# คีย์สำหรับเข้ารหัส JWT Token
 JWT_SECRET=MatPlan_SecretKey_2026_SecureKey_ChangeThis
 ```
-
-> 💡 **คำอธิบายเรื่องพอร์ตการทำงาน (Port Architecture):**
-> * **Backend Server (`PORT=3005`):** ตัว Node.js/Express จะรันอยู่เบื้องหลังบนพอร์ต **3005** เพื่อป้องกันไม่ให้ชนกับแอปพลิเคชันอื่น
-> * **Frontend External Access (`:3000`):** ผู้ใช้งานหรือโปรแกรมภายนอกจะเข้าใช้งานผ่าน Nginx / Web Server พอร์ต **3000** (`http://10.2.0.15:3000/MatPlan`) ซึ่ง Nginx จะทำหน้าที่ Proxy ส่งต่อคำขอภายในไปยังพอร์ต 3005 ของ Backend โดยอัตโนมัติ
-
----
-
-### ขั้นตอนที่ 4: ติดตั้ง Dependencies และ Build ระบบใหม่
-
-1. ติดตั้งไลบรารีใหม่ที่จำเป็นสำหรับการทำงาน (เช่น `jsonwebtoken`, `bcryptjs`):
-   ```bash
-   npm install
-   ```
-2. สั่ง Build คอมไพล์โปรเจกต์ใหม่ทั้ง Frontend และ Backend:
-   ```bash
-   npm run build
-   ```
-   *(กระบวนการนี้สำคัญมาก! จะทำการ Bundle ไฟล์เซิร์ฟเวอร์ทั้งหมดเป็นไฟล์เดียวคือ `dist/server.cjs` และ Build หน้าจอ Frontend ไปยังไดเรกทอรี `dist/`)*
-
----
-
-### ขั้นตอนที่ 5: ลบกระบวนการ PM2 เดิมและสั่งรันด้วยไฟล์ Build ใหม่ (CRITICAL STEP)
-
-เนื่องจากระบบเวอร์ชัน 1.0 มีการเปลี่ยนเทคโนโลยีการรันและการจัดการไฟล์เซิร์ฟเวอร์ (จาก `server.js` หรือ `server.ts` ไปเป็นไฟล์ Bundle ประสิทธิภาพสูง **`dist/server.cjs`**) หากท่านใช้คำสั่ง `pm2 restart` เพียงอย่างเดียว PM2 จะพยายามเปิดไฟล์เก่าที่จดจำไว้ในระบบ ทำให้โปรแกรมไม่ยอมเปลี่ยนเป็นเวอร์ชันใหม่
-
-**กรุณาใช้คำสั่งตามลำดับดังนี้:**
-
-1. **ตรวจสอบกระบวนการ PM2 ที่ทำงานอยู่เดิม:**
-   ```bash
-   pm2 status
-   ```
-   *(มองหาชื่อแอปพลิเคชันที่รันระบบอยู่ เช่น `MatPlan` หรือ `server` หรือ `index`)*
-
-2. **สั่งลบโปรเซสเดิมออก:**
-   ```bash
-   # สมมติว่าโปรเซสเดิมชื่อ MatPlan ให้สั่งลบ:
-   pm2 delete MatPlan
-   
-   # หรือหากชื่อเดิมคือ server ให้สั่งลบ:
-   pm2 delete server
-   ```
-
-3. **สั่งเริ่มต้นกระบวนการด้วยเซิร์ฟเวอร์คอมไพล์ใหม่ล่าสุด (`dist/server.cjs`):**
-   ```bash
-   pm2 start dist/server.cjs --name MatPlan
-   ```
-
-4. **บันทึกสถานะ PM2 เพื่อให้เปิดอัตโนมัติเมื่อรีสตาร์ตเครื่องเซิร์ฟเวอร์:**
-   ```bash
-   pm2 save
-   ```
-
-5. **(แนะนำเพิ่มเติม) ลบไฟล์โค้ดเซิร์ฟเวอร์เก่าออกจากโฟลเดอร์หลัก เพื่อป้องกันความสับสน:**
-   ```bash
-   # ลบไฟล์ server.js ตัวเก่าในรูทโฟลเดอร์ออก (หากมี) เพื่อไม่ให้ Node ดึงไปใช้ซ้ำซ้อน
-   rm -f server.js
-   ```
 
 ---
 
 ## 4. การตรวจสอบความถูกต้องหลังอัปเดต (Verification & Health Check)
 
-### 4.1 ตรวจสอบฐานข้อมูลใน MySQL
-เมื่อ PM2 รันขึ้นมาสำเร็จ ให้เปิดโปรแกรมจัดการฐานข้อมูล (เช่น Navicat / HeidiSQL) บนเครื่อง `10.1.0.201` และตรวจสอบในฐานข้อมูล `MatPlan` จะพบว่ามีตารางเพิ่มขึ้นมาใหม่อัตโนมัติรวมเป็น 6 ตารางดังนี้:
-* `system_state` (ตารางเดิม)
-* `users` (ตารางใหม่)
-* `requests` (ตารางใหม่)
-* `departments` (ตารางใหม่)
-* `work_groups` (ตารางใหม่)
-* `system_logs` (ตารางใหม่)
+1. **ตรวจสอบความพร้อมของระบบผ่าน API Health Check:**
+   ```bash
+   curl http://127.0.0.1:3005/api/health
+   # ควรได้รับผลลัพธ์: {"status":"ok","mode":"production"}
+   ```
 
-### 4.2 ตรวจสอบผู้ใช้งานเริ่มต้น (Default Seed Users)
-ระบบจะสร้างบัญชีผู้ใช้เริ่มต้นให้อัตโนมัติสำหรับทดสอบและใช้งานครั้งแรก:
+2. **ตรวจสอบการเชื่อมต่อฐานข้อมูล MySQL:**
+   ```bash
+   curl http://127.0.0.1:3005/api/db-status
+   # ควรได้รับ: {"success":true,"connected":true,"dbType":"mysql",...}
+   ```
 
-| Username | Password | ชื่อผู้ใช้งาน | บทบาท (Role) |
-| :--- | :--- | :--- | :--- |
-| `admin` | `password` | ผู้ดูแลระบบสูงสุด | Administrator |
-| `depthead` | `password` | หัวหน้ากลุ่มงาน | Dept Head |
-| `procurement` | `password` | เจ้าหน้าที่พัสดุ | Procurement Staff |
-| `exec` | `password` | ผู้บริหาร | Executive |
+3. **ตรวจสอบตารางใน MySQL Server:**
+   เปิดโปรแกรมจัดการฐานข้อมูล (HeidiSQL / Navicat / DBeaver) จะต้องพบตารางทั้งหมด 10 ตารางตามที่ระบุในข้อ 1
 
-*(แนะนำให้ผู้ใช้ทุกท่านเปลี่ยนรหัสผ่านในภายหลังผ่านเมนูโปรไฟล์เพื่อความปลอดภัย)*
-
-### 4.3 ตรวจสอบหน้าจอ Live MySQL Explorer
-1. เข้าใช้งานระบบผ่านเบราว์เซอร์ที่เครื่อง App Server (เช่น `http://10.1.0.15:3005/MatPlan`)
-2. ล็อกอินด้วยสิทธิ์เจ้าหน้าที่พัสดุ (`procurement` / `password`)
-3. ไปที่เมนู **"ฝ่ายพัสดุ (Procurement)"**
-4. คลิกแท็บ **"⚡ Live MySQL Explorer (Server-side Pagination)"**
-5. ตรวจสอบว่าระบบสามารถดึงข้อมูลพัสดุโดยตรงจากตาราง MySQL แบบแบ่งหน้า, การกรองตามฝ่าย/แผนก และการค้นหาแบบ Real-time ได้สำเร็จอย่างมีประสิทธิภาพ
+4. **ทดสอบล็อกอินและตรวจสอบ Audit Trail:**
+   - ทดลองเข้าใช้งานผ่านเว็บเบราว์เซอร์
+   - ทดลองกดแก้ไข/ปรับยอดคำขอ แล้วเปิด **Audit Trail Modal** เพื่อตรวจสอบว่ามีบันทึก Before/After ขึ้นอย่างถูกต้อง
 
 ---
 
-## 5. การรับมือและแก้ไขปัญหาหากเกิดข้อผิดพลาด (Troubleshooting & Rollback)
+## 5. การรับมือและแก้ไขปัญหา (Troubleshooting & Rollback)
 
-* **ปัญหา: ขึ้น `Error: listen EADDRINUSE: address already in use 0.0.0.0:3000` (พอร์ตชนกับแอปอื่น)**
-  * *สาเหตุ:* พอร์ต `3000` ถูกใช้งานโดยระบบเดิมบนเครื่อง ให้เปลี่ยนไปใช้พอร์ต **`3005`** ตามที่กำหนด
-  * *การแก้ไข:* 
-    1. ตรวจสอบไฟล์ `.env` บนเครื่อง ให้ตั้งค่าเป็น:
-       ```env
-       PORT=3005
-       ```
-    2. รัน `npm run build` ใหม่เพื่ออัปเดตการตั้งค่าพอร์ตเข้าสู่ไฟล์คอมไพล์
-    3. สั่งลบโปรเซสเดิมและเริ่มรันใหม่บนพอร์ต 3005:
-       ```bash
-       pm2 delete MatPlan
-       pm2 start dist/server.cjs --name MatPlan
-       pm2 save
-       ```
-
-* **ปัญหา: ขึ้น `[MySQL] DB_HOST or DB_USER not set. Using local file-based db.json storage.`**
-  * *สาเหตุ:* ตัว Node.js ไม่ได้โหลดค่าจากไฟล์ `.env` หรือยังไม่ได้ Build โค้ดใหม่
-  * *การแก้ไข:*
-    1. ตรวจสอบว่าในโฟลเดอร์แอปมีไฟล์ `.env` อยู่จริง และมีบรรทัด `DB_HOST=10.1.0.201` และ `DB_USER=root` เรียบร้อย
-    2. รัน `git pull` เพื่อดึงโค้ดล่าสุด (ที่เพิ่ม `dotenv.config()` ไว้ใน `server.ts` และ `db.ts`)
-    3. สั่ง Build โครงการใหม่ด้วยคำสั่ง:
-       ```bash
-       npm run build
-       ```
-    4. สั่ง restart PM2:
-       ```bash
-       pm2 restart MatPlan
-       ```
-
-* **ปัญหา: PM2 ขึ้น Error เชื่อมต่อ MySQL ไม่ได้**
-  * *การแก้ไข:* ตรวจสอบว่า IP `10.1.0.201` เปิดให้เครื่อง App Server เชื่อมต่อเข้าพอร์ต `3306` ได้หรือไม่ และตรวจสอบความถูกต้องของ `DB_PASSWORD` ในไฟล์ `.env`
-
-* **ปัญหา: โหลดหน้าเว็บแล้วขึ้น 404 หรือหน้าจอขาว**
-  * *การแก้ไข:* รัน `npm run build` อีกครั้ง และตรวจสอบให้แน่ใจว่าได้ทำการลบ PM2 ตัวเดิมด้วย `pm2 delete` แล้วสั่งเริ่มต้นใหม่ด้วย `pm2 start dist/server.cjs --name MatPlan` เพื่อให้ทำงานจากโค้ดตัวใหม่ล่าสุดจริง ๆ
-
-* **ปัญหา: ลืมรหัสผ่านผู้ดูแลระบบ (Admin Password Reset)**
-  * *สาเหตุ:* มีการเปลี่ยนรหัสผ่านผู้ดูแลระบบ `admin` แล้วจำรหัสผ่านไม่ได้
-  * *การแก้ไข (เลือกวิธีใดวิธีหนึ่ง):*
-    * **วิธีที่ 1: รันคำสั่ง SQL ใน MySQLโดยตรง**
-      เปิดโปรแกรม MySQL (เช่น phpMyAdmin, MySQL Workbench หรือ SSH ใน MySQL Server 10.2.0.201) แล้วรันคำสั่ง:
-      ```sql
-      UPDATE users SET password = '1234' WHERE username = 'admin';
-      ```
-      *(รหัสผ่าน admin จะถูกรีเซ็ตกลับเป็น `1234` ทันที)*
-
-    * **วิธีที่ 2: รันคำสั่ง Node.js รีเซ็ตผ่าน Terminal (SSH) ในเครื่อง App Server**
-      ต้องย้ายเข้าไปยังโฟลเดอร์โครงการ `/var/www/html/MatPlan` ก่อนรันคำสั่ง:
-      ```bash
-      cd /var/www/html/MatPlan && node -e "
-      const mysql = require('mysql2/promise');
-      require('dotenv').config();
-      async function reset() {
-        const conn = await mysql.createConnection({
-          host: process.env.DB_HOST || '10.2.0.201',
-          port: Number(process.env.DB_PORT) || 3306,
-          user: process.env.DB_USER || 'MatPlan',
-          password: process.env.DB_PASS || process.env.DB_PASSWORD,
-          database: process.env.DB_NAME || 'MatPlan'
-        });
-        await conn.query('UPDATE users SET password = ? WHERE username = ?', ['1234', 'admin']);
-        console.log('✅ รีเซ็ตรหัสผ่าน admin เป็น 1234 สำเร็จ!');
-        await conn.end();
-      }
-      reset().catch(console.error);
-      "
-      ```
-
-* **การ Rollback กลับเวอร์ชันเดิม (กรณีจำเป็นฉุกเฉิน)**
-  1. คืนค่าฐานข้อมูลเดิม: `mysql -u root -p MatPlan < backup_matplan_before_update.sql`
-  2. สลับโค้ดกลับเวอร์ชันเดิมใน Git: `git checkout <commit_old_hash>`
-  3. สั่งรันคำสั่งรันระบบแบบเดิมของท่านหรือย้อนกระบวนการใน PM2
+- **หากหน้าจอยังแสดงเวอร์ชันเก่า:**
+  ให้กด `Ctrl + F5` หรือ `Cmd + Shift + R` บนเบราว์เซอร์เพื่อล้างแคช
+- **หาก PM2 สตาร์ตไม่ขึ้น:**
+  ตรวจสอบบันทึกข้อผิดพลาดด้วยคำสั่ง `pm2 logs MatPlan`
+- **การ Rollback ข้อมูล (หากจำเป็น):**
+  ```bash
+  mysql -u root -p MatPlan < backup_matplan_before_v1_19.sql
+  ```

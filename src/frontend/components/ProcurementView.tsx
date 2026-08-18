@@ -6,6 +6,7 @@ import { ALL_ITEMS, CATALOG, CATEGORY_LABELS, CATEGORY_ORDER, deptName, fmtBaht,
 import { CompareGrid } from './CompareGrid';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
+import { AuditTrailModal } from './AuditTrailModal';
 import { sortItems } from '../utils/sortHelper';
 import { Info, Send, Layers, BarChart3, Calculator, ArrowUpDown, Calendar, TrendingUp, XCircle, RotateCcw, Download, Search, AlertCircle, CheckCircle2, CheckCheck, Crown, Clock, Filter, UserCheck, PackageCheck, ShieldCheck, Database, FileEdit, Unlock, Lock, Sparkles, History, PlusCircle } from 'lucide-react';
 
@@ -47,6 +48,7 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
   const [activeTab, setActiveTab] = useState<'pending' | 'compare' | 'price-history' | 'approved-summary' | 'rejected' | 'revisions' | 'sql-pagination'>('pending');
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedAuditItem, setSelectedAuditItem] = useState<RequestItem | null>(null);
   const [sortField, setSortField] = useState<'itemName' | 'totalQty' | 'price' | 'lineBudget'>('itemName');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
@@ -2115,6 +2117,14 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
           </tbody>
         </table>
       </div>
+
+      {/* Audit Trail Modal */}
+      {selectedAuditItem && (
+        <AuditTrailModal
+          item={selectedAuditItem}
+          onClose={() => setSelectedAuditItem(null)}
+        />
+      )}
     </div>
   );
 };

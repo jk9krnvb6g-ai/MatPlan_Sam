@@ -1,6 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { CategoryId, Department, RequestItem, User, UserRole, WorkGroup, LogEntry, MaterialItem, DepartmentRevisionPermission } from './types';
-import { CUSTOM_UNITS, SEED_USERS, seedRequests, generate10000Requests, INITIAL_WORK_GROUPS, DEPARTMENTS, saveCustomCategory, deleteCustomCategory } from './data/catalog';
+import { CategoryId, Department, RequestItem, User, UserRole, WorkGroup, LogEntry, MaterialItem, DepartmentRevisionPermission, RequestAuditLog, RequestStatus, SubmissionSchedule } from './types';
+import { 
+  CUSTOM_UNITS, 
+  SEED_USERS, 
+  seedRequests, 
+  generate10000Requests, 
+  INITIAL_WORK_GROUPS, 
+  DEPARTMENTS, 
+  saveCustomCategory, 
+  deleteCustomCategory, 
+  getCustomCategories,
+  getCustomUnits,
+  saveCustomUnit,
+  setAllCustomCategories,
+  setAllCustomUnits,
+  CATEGORY_LABELS,
+  guessUnit 
+} from './data/catalog';
+import { calculateSpike, checkSubmissionOpen, generateWorkflowNotifications } from './utils/workflowHelper';
 
 import { Sidebar } from './components/Sidebar';
 import { StaffView } from './components/StaffView';
@@ -9,17 +26,19 @@ import { ProcurementView } from './components/ProcurementView';
 import { ProcurementHeadView } from './components/ProcurementHeadView';
 import { ExecutiveView } from './components/ExecutiveView';
 import { AdminUsersView } from './components/AdminUsersView';
-import { AdminMaterialsView } from './components/AdminMaterialsView';
+import { AdminSystemSettingsView } from './components/AdminSystemSettingsView';
 import { AdminOrgView } from './components/AdminOrgView';
 import { AdminLogsView } from './components/AdminLogsView';
-import { AdminDangerZone } from './components/AdminDangerZone';
 import { AuthView } from './components/AuthView';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { PrintableReportModal } from './components/PrintableReportModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { ToastAlert } from './components/ToastAlert';
 import { DbStatusModal, DbStatusData } from './components/DbStatusModal';
-import { ChevronDown, Clock, Key, LogOut, Type, Sparkles, CheckCircle2, Sun, Moon, Trash2, RotateCcw, Database, AlertTriangle, Server, HardDrive } from 'lucide-react';
+import { NotificationCenterModal } from './components/NotificationCenterModal';
+import { AuditTrailModal } from './components/AuditTrailModal';
+import { playNotificationSound, showBrowserNotification } from './utils/soundHelper';
+import { ChevronDown, Clock, Key, LogOut, Type, Sparkles, CheckCircle2, Sun, Moon, Trash2, RotateCcw, Database, AlertTriangle, Server, HardDrive, Bell, UserCheck, Check, ShieldAlert } from 'lucide-react';
 
 export default function App() {
   // Dark/Light Mode state
@@ -64,6 +83,30 @@ export default function App() {
     return saved || '2569';
   });
 
+  // Submission Schedule Timeline state
+  const [submissionSchedule, setSubmissionSchedule] = useState<SubmissionSchedule>(() => {
+    const saved = localStorage.getItem('survey_submission_schedule');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return {
+      startDate: '2026-01-01',
+      endDate: '2026-03-31',
+      isOpen: true,
+      allowLateSubmission: false,
+      announcement: 'เปิดรับแบบสำรวจความต้องการวัสดุและครุภัณฑ์ ประจำปีงบประมาณ 2569'
+    };
+  });
+
+  useEffect(() => {
+    localStorage.setItem('survey_submission_schedule', JSON.stringify(submissionSchedule));
+  }, [submissionSchedule]);
+
+  // Notification Modal and Audit Log inspection state
+  const [showNotificationCenter, setShowNotificationCenter] = useState(false);
+  const [selectedAuditItem, setSelectedAuditItem] = useState<RequestItem | null>(null);
+  const [showFloatingRegAlert, setShowFloatingRegAlert] = useState(true);
+
   // Persistence state
   const [workGroups, setWorkGroups] = useState<WorkGroup[]>(() => {
     const saved = localStorage.getItem('survey_work_groups');
@@ -89,6 +132,9 @@ export default function App() {
     const saved = localStorage.getItem('survey_custom_items');
     return saved ? JSON.parse(saved) : {};
   });
+
+  const [customCategories, setCustomCategories] = useState<Record<string, string>>(() => getCustomCategories());
+  const [customUnits, setCustomUnits] = useState<Record<string, string>>(() => getCustomUnits());
 
   const [itemPrices, setItemPrices] = useState<Record<string, number>>(() => {
     const saved = localStorage.getItem('survey_item_prices');
@@ -153,7 +199,7 @@ export default function App() {
     return null; // Start on login page
   });
 
-  const [activeRole, setActiveRole] = useState<UserRole | 'users' | 'materials' | 'org' | 'logs' | 'danger'>('staff');
+  const [activeRole, setActiveRole] = useState<UserRole | 'users' | 'materials' | 'org' | 'logs' | 'danger' | 'settings'>('staff');
 
   // Modals & Alerts
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
@@ -252,18 +298,46 @@ export default function App() {
         if (json.success && json.data) {
           const d = json.data;
           isPollingUpdateRef.current = true;
-          if (d.workGroups) setWorkGroups(d.workGroups);
-          if (d.departments) setDepartments(d.departments);
-          if (d.users) setUsers(d.users);
+          if (d.workGroups && d.workGroups.length > 0) setWorkGroups(d.workGroups);
+          if (d.departments && d.departments.length > 0) setDepartments(d.departments);
+          if (d.users && d.users.length > 0) setUsers(d.users);
           if (d.requests) setRequests(d.requests);
-          if (d.customItems) setCustomItems(d.customItems);
-          if (d.itemPrices) setItemPrices(d.itemPrices);
-          if (d.materialActive) setMaterialActive(d.materialActive);
+          if (d.customItems && typeof d.customItems === 'object') {
+            setCustomItems(prev => {
+              const merged = { ...prev };
+              Object.entries(d.customItems).forEach(([k, list]: any) => {
+                if (Array.isArray(list) && list.length > 0) {
+                  merged[k] = Array.from(new Set([...(merged[k] || []), ...list]));
+                }
+              });
+              return merged;
+            });
+          }
+          if (d.customCategories && typeof d.customCategories === 'object') {
+            setCustomCategories(prev => {
+              const merged = { ...prev, ...d.customCategories };
+              setAllCustomCategories(merged);
+              return merged;
+            });
+          }
+          if (d.customUnits && typeof d.customUnits === 'object') {
+            setCustomUnits(prev => {
+              const merged = { ...prev, ...d.customUnits };
+              setAllCustomUnits(merged);
+              return merged;
+            });
+          }
+          if (d.itemPrices && typeof d.itemPrices === 'object') {
+            setItemPrices(prev => ({ ...prev, ...d.itemPrices }));
+          }
+          if (d.materialActive && typeof d.materialActive === 'object') {
+            setMaterialActive(prev => ({ ...prev, ...d.materialActive }));
+          }
           if (d.revisionPermissions) setRevisionPermissions(d.revisionPermissions);
           if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
           if (d.fiscalYear) setFiscalYear(d.fiscalYear);
           if (d.isCatalogCleared !== undefined) setIsCatalogCleared(d.isCatalogCleared);
-          if (d.logs) setLogs(d.logs);
+          if (d.logs && Array.isArray(d.logs) && d.logs.length > 0) setLogs(d.logs);
         }
       } catch (err) {
         console.warn('Backend state response handling fallback:', err);
@@ -311,6 +385,16 @@ export default function App() {
   }, [customItems]);
 
   useEffect(() => {
+    localStorage.setItem('survey_custom_categories', JSON.stringify(customCategories));
+    setAllCustomCategories(customCategories);
+  }, [customCategories]);
+
+  useEffect(() => {
+    localStorage.setItem('survey_custom_units', JSON.stringify(customUnits));
+    setAllCustomUnits(customUnits);
+  }, [customUnits]);
+
+  useEffect(() => {
     localStorage.setItem('survey_item_prices', JSON.stringify(itemPrices));
   }, [itemPrices]);
 
@@ -346,6 +430,8 @@ export default function App() {
         users,
         requests,
         customItems,
+        customCategories,
+        customUnits,
         itemPrices,
         materialActive,
         revisionPermissions,
@@ -358,7 +444,7 @@ export default function App() {
     .catch(err => {
       console.error('Failed to sync state to backend:', err);
     });
-  }, [workGroups, departments, users, requests, customItems, itemPrices, materialActive, revisionPermissions, isPlanFrozen, fiscalYear, isCatalogCleared, logs, isLoadingBackend, apiBase]);
+  }, [workGroups, departments, users, requests, customItems, customCategories, customUnits, itemPrices, materialActive, revisionPermissions, isPlanFrozen, fiscalYear, isCatalogCleared, logs, isLoadingBackend, apiBase]);
 
   // Real-time EventSource listener for Server-Sent Events (SSE)
   useEffect(() => {
@@ -381,6 +467,8 @@ export default function App() {
         // Display beautiful real-time push toast alerts to user
         if (data.payload && data.payload.message) {
           handleToast(data.payload.message, 'info');
+          playNotificationSound();
+          showBrowserNotification('MatPlan แจ้งเตือน', data.payload.message);
         }
 
         // Instant refresh of local state from server
@@ -400,6 +488,14 @@ export default function App() {
                 if (d.users) setUsers(d.users);
                 if (d.requests) setRequests(d.requests);
                 if (d.customItems) setCustomItems(d.customItems);
+                if (d.customCategories) {
+                  setCustomCategories(d.customCategories);
+                  setAllCustomCategories(d.customCategories);
+                }
+                if (d.customUnits) {
+                  setCustomUnits(d.customUnits);
+                  setAllCustomUnits(d.customUnits);
+                }
                 if (d.itemPrices) setItemPrices(d.itemPrices);
                 if (d.materialActive) setMaterialActive(d.materialActive);
                 if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
@@ -580,6 +676,24 @@ export default function App() {
     }
   };
 
+  // Audit Trail helper
+  const createAuditEntry = (params: {
+    role: UserRole;
+    actorName: string;
+    action: 'submit' | 'approve' | 'reject' | 'adjust_qty' | 'update_price' | 'remark' | 'revision';
+    actionLabelTh: string;
+    oldQty?: number;
+    newQty?: number;
+    oldStatus?: RequestStatus;
+    newStatus?: RequestStatus;
+    comment?: string;
+    reason?: string;
+  }): RequestAuditLog => ({
+    id: 'LOG-' + Math.random().toString(36).substring(2, 9),
+    timestamp: new Date().toISOString(),
+    ...params
+  });
+
   // Staff Handlers
   const handleSubmitStaffRequests = (deptId: string, itemsToSubmit: { itemName: string; qtyRequested: number }[], reason: string) => {
     setRequests(prev => {
@@ -589,17 +703,39 @@ export default function App() {
         const existingIndex = updated.findIndex(r => r.deptId === deptId && r.itemName === item.itemName && r.status === 'rejected');
         if (existingIndex > -1) {
           const oldReq = updated[existingIndex];
+          const logEntry = createAuditEntry({
+            role: currentUser?.role || 'staff',
+            actorName: currentUser?.name || 'เจ้าหน้าที่ผู้ขอ',
+            action: 'submit',
+            actionLabelTh: 'แก้ไขและส่งคำขอใหม่หลังถูกตีกลับ',
+            oldQty: oldReq.qtyRequested,
+            newQty: item.qtyRequested,
+            oldStatus: oldReq.status,
+            newStatus: 'pending_head',
+            reason
+          });
           updated[existingIndex] = {
             ...oldReq,
             qtyOriginal: oldReq.qtyOriginal ?? oldReq.qtyRequested,
             qtyRequested: item.qtyRequested,
             status: 'pending_head',
             comment: '',
-            reason
+            reason,
+            auditLogs: [...(oldReq.auditLogs || []), logEntry]
           };
         } else {
+          const newReqId = 'REQ-' + String(Math.floor(Math.random() * 9000) + 1000);
+          const logEntry = createAuditEntry({
+            role: currentUser?.role || 'staff',
+            actorName: currentUser?.name || 'เจ้าหน้าที่ผู้ขอ',
+            action: 'submit',
+            actionLabelTh: 'สร้างคำขอจัดสรรพัสดุ',
+            newQty: item.qtyRequested,
+            newStatus: 'pending_head',
+            reason
+          });
           updated.push({
-            id: 'REQ-' + String(Math.floor(Math.random() * 9000) + 1000),
+            id: newReqId,
             deptId,
             itemName: item.itemName,
             unit: CUSTOM_UNITS[item.itemName] || 'ชิ้น',
@@ -610,7 +746,8 @@ export default function App() {
             comment: '',
             reason,
             unitPrice: null,
-            fiscalYear
+            fiscalYear,
+            auditLogs: [logEntry]
           });
         }
       });
@@ -621,11 +758,15 @@ export default function App() {
   };
 
   const handleAddCustomItem = (category: CategoryId, name: string, unit: string) => {
+    const trimmedName = name.trim();
+    const trimmedUnit = unit.trim() || 'ชิ้น';
+    saveCustomUnit(trimmedName, trimmedUnit);
+    setCustomUnits(prev => ({ ...prev, [trimmedName]: trimmedUnit }));
+
     setCustomItems(prev => {
       const list = prev[category] || [];
-      if (!list.includes(name)) {
-        CUSTOM_UNITS[name] = unit;
-        return { ...prev, [category]: [...list, name] };
+      if (!list.includes(trimmedName)) {
+        return { ...prev, [category]: [...list, trimmedName] };
       }
       return prev;
     });
@@ -642,14 +783,26 @@ export default function App() {
     setRequests(prev => prev.map(r => {
       if (r.id === id) {
         const isQtyChanged = newQty !== undefined && newQty !== r.qtyRequested;
+        const targetQty = newQty !== undefined ? newQty : r.qtyRequested;
+        const logEntry = createAuditEntry({
+          role: 'head',
+          actorName: currentUser?.name || 'หัวหน้าฝ่าย/กลุ่มงาน',
+          action: isQtyChanged ? 'adjust_qty' : 'approve',
+          actionLabelTh: isQtyChanged ? `หัวหน้ากลุ่มงานปรับยอดเป็น ${targetQty} และอนุมัติ` : 'หัวหน้ากลุ่มงานอนุมัติเห็นชอบ',
+          oldQty: r.qtyRequested,
+          newQty: targetQty,
+          oldStatus: r.status,
+          newStatus: 'pending_proc'
+        });
         return {
           ...r,
           qtyOriginal: r.qtyOriginal ?? r.qtyRequested,
-          qtyRequested: newQty !== undefined ? newQty : r.qtyRequested,
+          qtyRequested: targetQty,
           qtyAdjusted: isQtyChanged ? newQty : r.qtyAdjusted,
           adjustedByRole: isQtyChanged ? 'head' : r.adjustedByRole,
-          adjustedByName: isQtyChanged ? 'หัวหน้ากลุ่มงาน/ฝ่าย' : r.adjustedByName,
-          status: 'pending_proc'
+          adjustedByName: isQtyChanged ? (currentUser?.name || 'หัวหน้ากลุ่มงาน/ฝ่าย') : r.adjustedByName,
+          status: 'pending_proc',
+          auditLogs: [...(r.auditLogs || []), logEntry]
         };
       }
       return r;
@@ -661,13 +814,28 @@ export default function App() {
     if (rItem) {
       logAction('status_change', 'requests', `หัวหน้ากลุ่มงานปฏิเสธคำขอรายการ '${rItem.itemName}' ของฝ่าย ${rItem.deptId} (เนื่องจาก: ${comment})`);
     }
-    setRequests(prev => prev.map(r => r.id === id ? {
-      ...r,
-      status: 'rejected',
-      comment,
-      rejectedByRole: 'head',
-      rejectedByName: 'หัวหน้ากลุ่มงาน/ฝ่าย'
-    } : r));
+    setRequests(prev => prev.map(r => {
+      if (r.id === id) {
+        const logEntry = createAuditEntry({
+          role: 'head',
+          actorName: currentUser?.name || 'หัวหน้าฝ่าย/กลุ่มงาน',
+          action: 'reject',
+          actionLabelTh: 'หัวหน้ากลุ่มงานไม่อนุมัติ/ตีกลับ',
+          oldStatus: r.status,
+          newStatus: 'rejected',
+          comment
+        });
+        return {
+          ...r,
+          status: 'rejected',
+          comment,
+          rejectedByRole: 'head',
+          rejectedByName: currentUser?.name || 'หัวหน้ากลุ่มงาน/ฝ่าย',
+          auditLogs: [...(r.auditLogs || []), logEntry]
+        };
+      }
+      return r;
+    }));
   };
 
   const handleHeadApproveAll = (deptId: string, updatedQtys: Record<string, number>) => {
@@ -676,14 +844,26 @@ export default function App() {
       if (r.deptId === deptId && r.status === 'pending_head') {
         const editQty = updatedQtys[r.id];
         const isQtyChanged = editQty !== undefined && editQty !== r.qtyRequested;
+        const targetQty = editQty !== undefined ? editQty : r.qtyRequested;
+        const logEntry = createAuditEntry({
+          role: 'head',
+          actorName: currentUser?.name || 'หัวหน้าฝ่าย/กลุ่มงาน',
+          action: isQtyChanged ? 'adjust_qty' : 'approve',
+          actionLabelTh: isQtyChanged ? `หัวหน้ากลุ่มงานปรับยอดเป็น ${targetQty} และอนุมัติทั้งหมด` : 'หัวหน้ากลุ่มงานอนุมัติทั้งหมด',
+          oldQty: r.qtyRequested,
+          newQty: targetQty,
+          oldStatus: r.status,
+          newStatus: 'pending_proc'
+        });
         return {
           ...r,
           qtyOriginal: r.qtyOriginal ?? r.qtyRequested,
-          qtyRequested: editQty !== undefined ? editQty : r.qtyRequested,
+          qtyRequested: targetQty,
           qtyAdjusted: isQtyChanged ? editQty : r.qtyAdjusted,
           adjustedByRole: isQtyChanged ? 'head' : r.adjustedByRole,
-          adjustedByName: isQtyChanged ? 'หัวหน้ากลุ่มงาน/ฝ่าย' : r.adjustedByName,
-          status: 'pending_proc'
+          adjustedByName: isQtyChanged ? (currentUser?.name || 'หัวหน้ากลุ่มงาน/ฝ่าย') : r.adjustedByName,
+          status: 'pending_proc',
+          auditLogs: [...(r.auditLogs || []), logEntry]
         };
       }
       return r;
@@ -812,13 +992,24 @@ export default function App() {
     setRequests(prev => prev.map(r => {
       if (r.id === requestId) {
         const isQtyChanged = newQty !== r.qtyRequested;
+        const logEntry = createAuditEntry({
+          role: 'proc',
+          actorName: currentUser?.name || 'เจ้าหน้าที่ฝ่ายพัสดุ',
+          action: 'adjust_qty',
+          actionLabelTh: `เจ้าหน้าที่พัสดุปรับแก้จำนวนจัดสรรเป็น ${newQty} ${r.unit}`,
+          oldQty: r.qtyRequested,
+          newQty,
+          oldStatus: r.status,
+          newStatus: r.status
+        });
         return {
           ...r,
           qtyOriginal: r.qtyOriginal ?? r.qtyRequested,
           qtyRequested: newQty,
           qtyAdjusted: isQtyChanged ? newQty : r.qtyAdjusted,
           adjustedByRole: isQtyChanged ? 'proc' : r.adjustedByRole,
-          adjustedByName: isQtyChanged ? 'เจ้าหน้าที่ฝ่ายพัสดุ' : r.adjustedByName
+          adjustedByName: isQtyChanged ? (currentUser?.name || 'เจ้าหน้าที่ฝ่ายพัสดุ') : r.adjustedByName,
+          auditLogs: [...(r.auditLogs || []), logEntry]
         };
       }
       return r;
@@ -830,10 +1021,19 @@ export default function App() {
     logAction('status_change', 'requests', `เจ้าหน้าที่พัสดุส่งตรวจสอบความเหมาะสมและเสนอราคาพัสดุรวมจำนวน ${count} รายการ ไปยังหัวหน้าฝ่ายพัสดุ`);
     setRequests(prev => prev.map(r => {
       if (r.status === 'pending_proc' && (!specificIds || specificIds.includes(r.id))) {
+        const logEntry = createAuditEntry({
+          role: 'proc',
+          actorName: currentUser?.name || 'เจ้าหน้าที่ฝ่ายพัสดุ',
+          action: 'approve',
+          actionLabelTh: 'เจ้าหน้าที่พัสดุตรวจสอบราคาและส่งเสนอหัวหน้าพัสดุ',
+          oldStatus: r.status,
+          newStatus: 'pending_proc_head'
+        });
         return {
           ...r,
           status: 'pending_proc_head',
-          unitPrice: itemPrices[r.itemName] ?? r.unitPrice
+          unitPrice: itemPrices[r.itemName] ?? r.unitPrice,
+          auditLogs: [...(r.auditLogs || []), logEntry]
         };
       }
       return r;
@@ -848,12 +1048,23 @@ export default function App() {
     setRequests(prev => prev.map(r => {
       if (r.id === id) {
         const isReturn = action === 'return';
+        const newStatus: RequestStatus = isReturn ? 'pending_head' : 'rejected';
+        const logEntry = createAuditEntry({
+          role: 'proc',
+          actorName: currentUser?.name || 'เจ้าหน้าที่ฝ่ายพัสดุ',
+          action: 'reject',
+          actionLabelTh: isReturn ? 'เจ้าหน้าที่พัสดุตีกลับให้หัวหน้าฝ่ายทบทวน' : 'เจ้าหน้าที่พัสดุปฏิเสธคำขอ',
+          oldStatus: r.status,
+          newStatus,
+          comment
+        });
         return {
           ...r,
-          status: isReturn ? 'pending_head' : 'rejected',
+          status: newStatus,
           comment: `${isReturn ? 'ตีกลับโดยเจ้าหน้าที่พัสดุ' : 'ปฏิเสธโดยเจ้าหน้าที่พัสดุ'}: ${comment}`,
           rejectedByRole: 'proc',
-          rejectedByName: 'เจ้าหน้าที่ฝ่ายพัสดุ'
+          rejectedByName: currentUser?.name || 'เจ้าหน้าที่ฝ่ายพัสดุ',
+          auditLogs: [...(r.auditLogs || []), logEntry]
         };
       }
       return r;
@@ -863,19 +1074,47 @@ export default function App() {
   // Procurement Head Handlers
   const handleProcHeadApproveToExec = (ids: string[]) => {
     logAction('status_change', 'requests', `หัวหน้าฝ่ายพัสดุลงนามเห็นชอบแผนพัสดุรวมจำนวน ${ids.length} รายการ เสนอเสนอผู้บริหารพิจารณาขั้นสุดท้าย`);
-    setRequests(prev => prev.map(r => ids.includes(r.id) ? { ...r, status: 'pending_exec' } : r));
+    setRequests(prev => prev.map(r => {
+      if (ids.includes(r.id)) {
+        const logEntry = createAuditEntry({
+          role: 'prochead',
+          actorName: currentUser?.name || 'หัวหน้าฝ่ายพัสดุ',
+          action: 'approve',
+          actionLabelTh: 'หัวหน้าฝ่ายพัสดุลงนามเห็นชอบส่งต่อผู้บริหาร',
+          oldStatus: r.status,
+          newStatus: 'pending_exec'
+        });
+        return {
+          ...r,
+          status: 'pending_exec',
+          auditLogs: [...(r.auditLogs || []), logEntry]
+        };
+      }
+      return r;
+    }));
   };
 
   const handleProcHeadRejectToProc = (ids: string[], comment: string, action: 'return' | 'reject' = 'return') => {
     logAction('status_change', 'requests', `หัวหน้าฝ่ายพัสดุ ${action === 'return' ? 'ตีกลับไปทบทวน' : 'ปฏิเสธคำขอ'} แผนพัสดุรวม ${ids.length} รายการ (ความคิดเห็น: ${comment})`);
     setRequests(prev => prev.map(r => {
       if (ids.includes(r.id)) {
+        const newStatus: RequestStatus = action === 'return' ? 'pending_proc' : 'rejected';
+        const logEntry = createAuditEntry({
+          role: 'prochead',
+          actorName: currentUser?.name || 'หัวหน้าฝ่ายพัสดุ',
+          action: 'reject',
+          actionLabelTh: action === 'return' ? 'หัวหน้าพัสดุตีกลับให้เจ้าหน้าที่พัสดุแก้ไข' : 'หัวหน้าพัสดุปฏิเสธคำขอ',
+          oldStatus: r.status,
+          newStatus,
+          comment
+        });
         return {
           ...r,
-          status: action === 'return' ? 'pending_proc' : 'rejected',
+          status: newStatus,
           comment: `${action === 'return' ? 'ตีกลับโดยหัวหน้าพัสดุ' : 'ปฏิเสธโดยหัวหน้าพัสดุ'}: ${comment}`,
           rejectedByRole: 'prochead',
-          rejectedByName: 'หัวหน้าฝ่ายพัสดุ'
+          rejectedByName: currentUser?.name || 'หัวหน้าฝ่ายพัสดุ',
+          auditLogs: [...(r.auditLogs || []), logEntry]
         };
       }
       return r;
@@ -885,13 +1124,47 @@ export default function App() {
   const handleProcHeadApproveAllToExec = () => {
     const count = requests.filter(r => r.status === 'pending_proc_head').length;
     logAction('status_change', 'requests', `หัวหน้าฝ่ายพัสดุลงนามเสนอเห็นชอบแผนความต้องการจัดซื้อวัสดุทั้งหมดในระบบ จำนวน ${count} รายการ ให้ผู้บริหารพิจารณาอนุมัติ`);
-    setRequests(prev => prev.map(r => r.status === 'pending_proc_head' ? { ...r, status: 'pending_exec' } : r));
+    setRequests(prev => prev.map(r => {
+      if (r.status === 'pending_proc_head') {
+        const logEntry = createAuditEntry({
+          role: 'prochead',
+          actorName: currentUser?.name || 'หัวหน้าฝ่ายพัสดุ',
+          action: 'approve',
+          actionLabelTh: 'หัวหน้าฝ่ายพัสดุลงนามเห็นชอบทั้งหมดส่งต่อผู้บริหาร',
+          oldStatus: r.status,
+          newStatus: 'pending_exec'
+        });
+        return {
+          ...r,
+          status: 'pending_exec',
+          auditLogs: [...(r.auditLogs || []), logEntry]
+        };
+      }
+      return r;
+    }));
   };
 
   // Executive Handlers
   const handleExecApproveFinal = (ids: string[]) => {
     logAction('status_change', 'requests', `ผู้บริหารลงนามเห็นชอบและอนุมัติจัดสรรงบประมาณโครงการวัสดุจำนวน ${ids.length} รายการ สำเร็จสมบูรณ์`);
-    setRequests(prev => prev.map(r => ids.includes(r.id) ? { ...r, status: 'approved' } : r));
+    setRequests(prev => prev.map(r => {
+      if (ids.includes(r.id)) {
+        const logEntry = createAuditEntry({
+          role: 'exec',
+          actorName: currentUser?.name || 'ผู้บริหาร',
+          action: 'approve',
+          actionLabelTh: 'ผู้บริหารลงนามอนุมัติจัดสรรงบประมาณโครงการ',
+          oldStatus: r.status,
+          newStatus: 'approved'
+        });
+        return {
+          ...r,
+          status: 'approved',
+          auditLogs: [...(r.auditLogs || []), logEntry]
+        };
+      }
+      return r;
+    }));
   };
 
   const handleExecRejectBack = (id: string, comment: string) => {
@@ -899,13 +1172,49 @@ export default function App() {
     if (rItem) {
       logAction('status_change', 'requests', `ผู้บริหารพิจารณาตีกลับคำขอจัดซื้อ '${rItem.itemName}' ของฝ่าย ${rItem.deptId} กลับไปยังฝ่ายพัสดุเพื่อชี้แจงแก้ไข (ข้อเสนอแนะ: ${comment})`);
     }
-    setRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'pending_proc_head', comment } : r));
+    setRequests(prev => prev.map(r => {
+      if (r.id === id) {
+        const logEntry = createAuditEntry({
+          role: 'exec',
+          actorName: currentUser?.name || 'ผู้บริหาร',
+          action: 'reject',
+          actionLabelTh: 'ผู้บริหารตีกลับให้ฝ่ายพัสดุชี้แจง/ปรับปรุง',
+          oldStatus: r.status,
+          newStatus: 'pending_proc_head',
+          comment
+        });
+        return {
+          ...r,
+          status: 'pending_proc_head',
+          comment,
+          auditLogs: [...(r.auditLogs || []), logEntry]
+        };
+      }
+      return r;
+    }));
   };
 
   const handleExecApproveAllFinal = () => {
     const count = requests.filter(r => r.status === 'pending_exec').length;
     logAction('status_change', 'requests', `ผู้บริหารลงนามมติอนุมัติแผนงบประมาณความต้องการจัดพัสดุทั้งหมดในระบบ จำนวนรวม ${count} รายการ เป็นเอกฉันท์เพื่อเริ่มการจัดซื้อจริง`);
-    setRequests(prev => prev.map(r => r.status === 'pending_exec' ? { ...r, status: 'approved' } : r));
+    setRequests(prev => prev.map(r => {
+      if (r.status === 'pending_exec') {
+        const logEntry = createAuditEntry({
+          role: 'exec',
+          actorName: currentUser?.name || 'ผู้บริหาร',
+          action: 'approve',
+          actionLabelTh: 'ผู้บริหารลงนามมติอนุมัติจัดสรรทั้งหมด',
+          oldStatus: r.status,
+          newStatus: 'approved'
+        });
+        return {
+          ...r,
+          status: 'approved',
+          auditLogs: [...(r.auditLogs || []), logEntry]
+        };
+      }
+      return r;
+    }));
   };
 
   const handleFreezePlan = () => {
@@ -956,14 +1265,85 @@ export default function App() {
     logAction('edit', 'users', `ปรับปรุงรายละเอียดสิทธิ์และบัญชีผู้ใช้งาน @${username} (สิทธิ์: ${roles.join(', ')}, แผนก: ${deptId}, สถานะ: ${status || 'ไม่ระบุ'})`);
   };
 
+  const handleAdminBulkApproveUsers = (usernames: string[]) => {
+    if (currentUser?.username !== 'admin') {
+      handleToast('สิทธิ์ในการอนุมัติผู้ใช้งาน จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    setUsers(prev => prev.map(u => usernames.includes(u.username) ? { ...u, status: 'approved' } : u));
+    logAction('status_change', 'users', `อนุมัติสิทธิ์การเข้าใช้งานระบบแบบกลุ่มจำนวน ${usernames.length} บัญชี (${usernames.map(u => '@' + u).join(', ')})`);
+  };
+
+  const handleAdminBulkChangeDept = (usernames: string[], targetDeptId: string) => {
+    if (currentUser?.username !== 'admin') {
+      handleToast('สิทธิ์ในการย้ายกลุ่มงาน/ฝ่าย จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    setUsers(prev => prev.map(u => {
+      if (usernames.includes(u.username)) {
+        if (u.username === 'admin') return u; // protect superadmin
+        return { ...u, deptId: targetDeptId };
+      }
+      return u;
+    }));
+    logAction('edit', 'users', `เปลี่ยนหน่วยงาน/ฝ่ายแบบกลุ่มจำนวน ${usernames.length} บัญชี ไปยังฝ่าย '${targetDeptId}'`);
+  };
+
+  const handleAdminBulkResetPassword = (usernames: string[], newPass: string) => {
+    if (currentUser?.username !== 'admin') {
+      handleToast('สิทธิ์ในการรีเซ็ตรหัสผ่าน จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    usernames.forEach(uname => {
+      handleResetUserPassword(uname, newPass);
+    });
+    logAction('edit', 'users', `รีเซ็ตรหัสผ่านแบบกลุ่มจำนวน ${usernames.length} บัญชี`);
+  };
+
+  const handleAdminBulkChangeStatus = (usernames: string[], newStatus: User['status']) => {
+    if (currentUser?.username !== 'admin') {
+      handleToast('สิทธิ์ในการปรับสถานะผู้ใช้งาน จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    setUsers(prev => prev.map(u => {
+      if (usernames.includes(u.username)) {
+        if (u.username === 'admin') return u; // protect superadmin
+        return { ...u, status: newStatus };
+      }
+      return u;
+    }));
+    logAction('status_change', 'users', `ปรับสถานะผู้ใช้แบบกลุ่มจำนวน ${usernames.length} บัญชี เป็น '${newStatus}'`);
+  };
+
+  const handleAdminBulkDeleteUsers = (usernames: string[]) => {
+    if (currentUser?.username !== 'admin') {
+      handleToast('สิทธิ์ในการลบผู้ใช้งาน จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    const safeUsernames = usernames.filter(u => u !== 'admin' && u !== currentUser?.username);
+    setUsers(prev => prev.filter(u => !safeUsernames.includes(u.username)));
+    logAction('delete', 'users', `ลบบัญชีผู้ใช้งานออกจากระบบแบบกลุ่มจำนวน ${safeUsernames.length} บัญชี (${safeUsernames.map(u => '@' + u).join(', ')})`);
+  };
+
   // Admin Material Handlers
   const handleAddCustomCategory = (key: string, label: string) => {
     saveCustomCategory(key, label);
+    setCustomCategories(prev => {
+      const next = { ...prev, [key]: label };
+      setAllCustomCategories(next);
+      return next;
+    });
     logAction('add', 'custom_category', `เพิ่มหมวดหมู่ประเภทวัสดุใหม่ '${label}' (ID: ${key})`);
   };
 
   const handleDeleteCustomCategory = (key: string, label: string) => {
     deleteCustomCategory(key);
+    setCustomCategories(prev => {
+      const copy = { ...prev };
+      delete copy[key];
+      setAllCustomCategories(copy);
+      return copy;
+    });
     logAction('delete', 'custom_category', `ลบหมวดหมู่ประเภทวัสดุ '${label}' (ID: ${key}) ออกจากระบบ`);
   };
 
@@ -971,11 +1351,14 @@ export default function App() {
     setCustomItems(prev => {
       const list = prev[category] || [];
       if (!list.includes(name)) {
-        CUSTOM_UNITS[name] = unit;
         return { ...prev, [category]: [...list, name] };
       }
       return prev;
     });
+    if (unit) {
+      saveCustomUnit(name, unit);
+      setCustomUnits(prev => ({ ...prev, [name]: unit }));
+    }
     if (price > 0) {
       setItemPrices(prev => ({ ...prev, [name]: price }));
     }
@@ -990,7 +1373,15 @@ export default function App() {
     newUnit: string,
     newPrice: number
   ) => {
-    if (newUnit) CUSTOM_UNITS[newName] = newUnit;
+    if (newUnit) {
+      saveCustomUnit(newName, newUnit);
+      setCustomUnits(prev => {
+        const copy = { ...prev };
+        if (oldName !== newName) delete copy[oldName];
+        copy[newName] = newUnit;
+        return copy;
+      });
+    }
     if (newPrice >= 0) {
       setItemPrices(prev => {
         const copy = { ...prev };
@@ -1028,7 +1419,74 @@ export default function App() {
     });
   };
 
+  const handleAdminBulkToggleActive = (itemKeys: string[], setActiveTo: boolean) => {
+    setMaterialActive(prev => {
+      const copy = { ...prev };
+      itemKeys.forEach(k => {
+        copy[k] = setActiveTo;
+      });
+      return copy;
+    });
+    logAction('status_change', 'materials', `${setActiveTo ? 'เปิดการใช้งาน' : 'ปิดการใช้งาน'} รายการวัสดุกลางแบบกลุ่มจำนวน ${itemKeys.length} รายการ`);
+  };
+
+  const handleAdminBulkMoveCategory = (items: { name: string; oldCategory: CategoryId }[], targetCategory: CategoryId) => {
+    setCustomItems(prev => {
+      const nextState = { ...prev };
+      items.forEach(it => {
+        if (nextState[it.oldCategory]) {
+          nextState[it.oldCategory] = nextState[it.oldCategory].filter(x => x !== it.name);
+        }
+        const targetList = nextState[targetCategory] || [];
+        if (!targetList.includes(it.name)) {
+          nextState[targetCategory] = [...targetList, it.name];
+        }
+      });
+      return nextState;
+    });
+    logAction('edit', 'materials', `ย้ายหมวดหมู่วัสดุแบบกลุ่มจำนวน ${items.length} รายการ ไปยังหมวด '${targetCategory}'`);
+  };
+
+  const handleAdminBulkAdjustPrice = (itemNames: string[], adjustmentType: 'fixed' | 'percent', value: number) => {
+    setItemPrices(prev => {
+      const copy = { ...prev };
+      itemNames.forEach(name => {
+        const currentPrice = copy[name] !== undefined ? copy[name] : 0;
+        let newPrice = currentPrice;
+        if (adjustmentType === 'fixed') {
+          newPrice = Math.max(0, value);
+        } else if (adjustmentType === 'percent') {
+          newPrice = Math.max(0, Math.round(currentPrice * (1 + value / 100) * 100) / 100);
+        }
+        copy[name] = newPrice;
+      });
+      return copy;
+    });
+    logAction('edit', 'materials', `ปรับราคากลางวัสดุแบบกลุ่มจำนวน ${itemNames.length} รายการ (${adjustmentType === 'fixed' ? `กำหนดราคาเป็น ${value} บาท` : `ปรับ ${value > 0 ? '+' : ''}${value}%`})`);
+  };
+
+  const handleAdminBulkDeleteMaterials = (items: { name: string; category: CategoryId }[]) => {
+    setCustomItems(prev => {
+      const nextState = { ...prev };
+      items.forEach(it => {
+        if (nextState[it.category]) {
+          nextState[it.category] = nextState[it.category].filter(x => x !== it.name);
+        }
+      });
+      return nextState;
+    });
+    setMaterialActive(prev => {
+      const copy = { ...prev };
+      items.forEach(it => {
+        copy[it.name] = false; // Mark inactive as well
+      });
+      return copy;
+    });
+    logAction('delete', 'materials', `ลบรายการวัสดุกลางแบบกลุ่มจำนวน ${items.length} รายการ ออกจากระบบ`);
+  };
+
   const handleBulkImportMaterials = (items: MaterialItem[]) => {
+    const unitsToSave: Record<string, string> = {};
     setCustomItems(prev => {
       const nextState = { ...prev };
       items.forEach(it => {
@@ -1039,11 +1497,16 @@ export default function App() {
           nextState[it.category] = [...nextState[it.category], it.name];
         }
         if (it.unit) {
-          CUSTOM_UNITS[it.name] = it.unit;
+          saveCustomUnit(it.name, it.unit);
+          unitsToSave[it.name] = it.unit;
         }
       });
       return nextState;
     });
+
+    if (Object.keys(unitsToSave).length > 0) {
+      setCustomUnits(prev => ({ ...prev, ...unitsToSave }));
+    }
 
     setItemPrices(prev => {
       const copy = { ...prev };
@@ -1232,12 +1695,151 @@ export default function App() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
-                  Live Sync v1.11
+                  Live Sync v1.15
                 </span>
               </p>
             </div>
           </div>
         </div>
+
+        {/* Dynamic Multi-Role Live Workflow Badge Button */}
+        {(() => {
+          if (!currentUser) return null;
+
+          // 1. Admin / Superadmin
+          if (currentUser.role === 'admin' || currentUser.role === 'superadmin') {
+            const pendingUsersCount = users.filter(u => u.status === 'pending').length;
+            if (pendingUsersCount > 0) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => setActiveRole('users')}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 via-red-600 to-rose-600 hover:from-rose-500 hover:to-red-500 text-white font-bold text-xs shadow-lg shadow-rose-950/40 ring-2 ring-rose-400/50 animate-pulse transition-all cursor-pointer shrink-0"
+                  title="มีผู้สมัครสมาชิกใหม่รออนุมัติ - คลิกเพื่อไปที่หน้าจัดการผู้ใช้ทันที"
+                >
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-90"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+                  </span>
+                  <UserCheck className="w-4 h-4 text-white" />
+                  <span className="font-bold">รออนุมัติสมาชิก {pendingUsersCount} ท่าน</span>
+                </button>
+              );
+            }
+          }
+
+          // 2. Department Head
+          if (currentUser.role === 'head') {
+            const pendingHeadCount = requests.filter(r => r.deptId === currentUser.deptId && r.status === 'pending_head').length;
+            if (pendingHeadCount > 0) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => setActiveRole('head')}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 via-pink-600 to-rose-600 hover:from-rose-500 hover:to-pink-500 text-white font-bold text-xs shadow-lg shadow-rose-950/40 ring-2 ring-rose-400/50 animate-pulse transition-all cursor-pointer shrink-0"
+                  title="มีคำขอใหม่ของฝ่ายท่านรอพิจารณา - คลิกเพื่อเปิดดูทันที"
+                >
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-90"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+                  </span>
+                  <AlertTriangle className="w-4 h-4 text-white" />
+                  <span className="font-bold">รอหัวหน้าฝ่ายพิจารณา {pendingHeadCount} รายการ</span>
+                </button>
+              );
+            }
+          }
+
+          // 3. Procurement Officer
+          if (currentUser.role === 'proc') {
+            const pendingProcCount = requests.filter(r => r.status === 'pending_proc').length;
+            if (pendingProcCount > 0) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => setActiveRole('proc')}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 via-orange-600 to-amber-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs shadow-lg shadow-amber-950/40 ring-2 ring-amber-400/50 animate-pulse transition-all cursor-pointer shrink-0"
+                  title="มีคำขอผ่านการรับรองจากหัวหน้าฝ่ายรอตรวจสอบราคากลาง - คลิกเพื่อเปิดดูทันที"
+                >
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-90"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+                  </span>
+                  <AlertTriangle className="w-4 h-4 text-white" />
+                  <span className="font-bold">รอพัสดุตรวจราคากลาง {pendingProcCount} รายการ</span>
+                </button>
+              );
+            }
+          }
+
+          // 4. Procurement Head
+          if (currentUser.role === 'prochead') {
+            const pendingProcHeadCount = requests.filter(r => r.status === 'pending_proc_head').length;
+            if (pendingProcHeadCount > 0) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => setActiveRole('prochead')}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-600 hover:from-indigo-500 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-indigo-950/40 ring-2 ring-indigo-400/50 animate-pulse transition-all cursor-pointer shrink-0"
+                  title="มีงบประมาณที่พัสดุสรุปยอดแล้วรอตรวจทาน - คลิกเพื่อเปิดดูทันที"
+                >
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-90"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+                  </span>
+                  <Clock className="w-4 h-4 text-white" />
+                  <span className="font-bold">รอหัวหน้าพัสดุตรวจทาน {pendingProcHeadCount} รายการ</span>
+                </button>
+              );
+            }
+          }
+
+          // 5. Executive
+          if (currentUser.role === 'exec') {
+            const pendingExecCount = requests.filter(r => r.status === 'pending_exec').length;
+            if (pendingExecCount > 0) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => setActiveRole('exec')}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 via-purple-600 to-rose-600 hover:from-rose-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-950/40 ring-2 ring-purple-400/50 animate-pulse transition-all cursor-pointer shrink-0"
+                  title="มีรายงานงบประมาณรอผู้บริหารลงนามอนุมัติ - คลิกเพื่อเปิดดูทันที"
+                >
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-90"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+                  </span>
+                  <ShieldAlert className="w-4 h-4 text-white" />
+                  <span className="font-bold">รอผู้บริหารลงนาม {pendingExecCount} รายการ</span>
+                </button>
+              );
+            }
+          }
+
+          // 6. Requester (Staff)
+          if (currentUser.role === 'staff') {
+            const rejectedCount = requests.filter(r => r.deptId === currentUser.deptId && r.status === 'rejected').length;
+            if (rejectedCount > 0) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => setActiveRole('staff')}
+                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-rose-600 via-red-600 to-rose-600 hover:from-rose-500 hover:to-red-500 text-white font-bold text-xs shadow-lg shadow-rose-950/40 ring-2 ring-rose-400/50 animate-pulse transition-all cursor-pointer shrink-0"
+                  title="มีคำขอของฝ่ายท่านถูกตีกลับแก้ไข - คลิกเพื่อตรวจสอบทันที"
+                >
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-90"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+                  </span>
+                  <AlertTriangle className="w-4 h-4 text-white" />
+                  <span className="font-bold">มีรายการถูกตีกลับ {rejectedCount} รายการ</span>
+                </button>
+              );
+            }
+          }
+
+          return null;
+        })()}
 
         {/* DB Connection Status Badge Button */}
         {(() => {
@@ -1322,6 +1924,41 @@ export default function App() {
             ใหญ่ขึ้น
           </button>
         </div>
+
+        {/* Universal Notification Bell Icon Button */}
+        <button
+          type="button"
+          onClick={() => setShowNotificationCenter(true)}
+          className="relative p-2 rounded-xl bg-slate-900/90 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-all cursor-pointer shadow-2xs flex items-center justify-center shrink-0"
+          title="เปิดศูนย์การแจ้งเตือนระบบครบวงจร (Notification Hub)"
+        >
+          <Bell className="w-4 h-4 text-slate-300" />
+          {(() => {
+            if (!currentUser) return null;
+            let count = 0;
+            if (currentUser.role === 'admin' || currentUser.role === 'superadmin') {
+              count = users.filter(u => u.status === 'pending').length;
+            } else if (currentUser.role === 'head') {
+              count = requests.filter(r => r.deptId === currentUser.deptId && r.status === 'pending_head').length;
+            } else if (currentUser.role === 'proc') {
+              count = requests.filter(r => r.status === 'pending_proc').length;
+            } else if (currentUser.role === 'prochead') {
+              count = requests.filter(r => r.status === 'pending_proc_head').length;
+            } else if (currentUser.role === 'exec') {
+              count = requests.filter(r => r.status === 'pending_exec').length;
+            } else if (currentUser.role === 'staff') {
+              count = requests.filter(r => r.deptId === currentUser.deptId && (r.status === 'rejected' || r.status === 'approved')).length;
+            }
+            if (count > 0) {
+              return (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-rose-600 text-white font-mono text-[10px] font-black rounded-full flex items-center justify-center px-1 border-2 border-slate-900 shadow-xs animate-bounce">
+                  {count}
+                </span>
+              );
+            }
+            return null;
+          })()}
+        </button>
 
         {/* Dark / Light Mode Icon Toggle Button */}
         <button
@@ -1567,6 +2204,7 @@ export default function App() {
                 requests={requests}
                 customItems={customItems}
                 fiscalYear={fiscalYear}
+                schedule={submissionSchedule}
                 onSubmitRequests={handleSubmitStaffRequests}
                 onSubmitRevisionPlan={handleSubmitRevisionPlan}
                 revisionPermissions={revisionPermissions}
@@ -1663,6 +2301,11 @@ export default function App() {
                 onApproveUser={handleAdminApproveUser}
                 onUpdateUser={handleAdminUpdateUser}
                 onResetPassword={handleResetUserPassword}
+                onBulkApproveUsers={handleAdminBulkApproveUsers}
+                onBulkChangeDept={handleAdminBulkChangeDept}
+                onBulkResetPassword={handleAdminBulkResetPassword}
+                onBulkChangeStatus={handleAdminBulkChangeStatus}
+                onBulkDeleteUsers={handleAdminBulkDeleteUsers}
                 onRequestConfirm={handleOpenConfirm}
                 onToastAlert={handleToast}
                 currentUser={currentUser}
@@ -1686,21 +2329,63 @@ export default function App() {
               />
             )}
 
-            {activeRole === 'materials' && (
-              <AdminMaterialsView
+            {(activeRole === 'settings' || activeRole === 'materials') && (
+              <AdminSystemSettingsView
+                currentUser={currentUser}
+                apiBase={apiBase}
                 customItems={customItems}
+                customCategories={customCategories}
                 itemPrices={itemPrices}
                 materialActive={materialActive}
                 fiscalYear={fiscalYear}
+                schedule={submissionSchedule}
+                requests={requests}
+                users={users}
+                departments={departments}
+                workGroups={workGroups}
+                onUpdateSchedule={setSubmissionSchedule}
                 onUpdateFiscalYear={setFiscalYear}
                 onAddMaterial={handleAdminAddMaterial}
                 onUpdateMaterial={handleAdminUpdateMaterial}
                 onToggleActive={handleAdminToggleActive}
+                onBulkToggleActive={handleAdminBulkToggleActive}
+                onBulkMoveCategory={handleAdminBulkMoveCategory}
+                onBulkAdjustPrice={handleAdminBulkAdjustPrice}
+                onBulkDeleteMaterials={handleAdminBulkDeleteMaterials}
                 onRequestConfirm={handleOpenConfirm}
                 onToastAlert={handleToast}
                 onAddCustomCategory={handleAddCustomCategory}
                 onDeleteCustomCategory={handleDeleteCustomCategory}
                 onBulkImportMaterials={handleBulkImportMaterials}
+                onRefreshState={() => {
+                  fetch(`${apiBase}/state`)
+                    .then(r => r.json())
+                    .then(json => {
+                      if (json.success && json.data) {
+                        const d = json.data;
+                        if (d.workGroups) setWorkGroups(d.workGroups);
+                        if (d.departments) setDepartments(d.departments);
+                        if (d.users) setUsers(d.users);
+                        if (d.requests) setRequests(d.requests);
+                        if (d.customItems) setCustomItems(d.customItems);
+                        if (d.customCategories) {
+                          setCustomCategories(d.customCategories);
+                          setAllCustomCategories(d.customCategories);
+                        }
+                        if (d.customUnits) {
+                          setCustomUnits(d.customUnits);
+                          setAllCustomUnits(d.customUnits);
+                        }
+                        if (d.itemPrices) setItemPrices(d.itemPrices);
+                        if (d.materialActive) setMaterialActive(d.materialActive);
+                        if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
+                        if (d.fiscalYear) setFiscalYear(d.fiscalYear);
+                        if (d.isCatalogCleared !== undefined) setIsCatalogCleared(d.isCatalogCleared);
+                        if (d.logs) setLogs(d.logs);
+                      }
+                    })
+                    .catch(() => {});
+                }}
               />
             )}
 
@@ -1713,42 +2398,114 @@ export default function App() {
                 onToastAlert={handleToast}
               />
             )}
-
-            {activeRole === 'danger' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'superadmin' || currentUser.username === 'admin') && (
-              <AdminDangerZone
-                currentUser={currentUser}
-                apiBase={apiBase}
-                totalRequests={requests.length}
-                totalUsers={users.length}
-                totalDepartments={departments.length}
-                fiscalYear={fiscalYear}
-                onRefreshState={() => {
-                  fetch(`${apiBase}/state`)
-                    .then(r => r.json())
-                    .then(json => {
-                      if (json.success && json.data) {
-                        const d = json.data;
-                        if (d.workGroups) setWorkGroups(d.workGroups);
-                        if (d.departments) setDepartments(d.departments);
-                        if (d.users) setUsers(d.users);
-                        if (d.requests) setRequests(d.requests);
-                        if (d.customItems) setCustomItems(d.customItems);
-                        if (d.itemPrices) setItemPrices(d.itemPrices);
-                        if (d.materialActive) setMaterialActive(d.materialActive);
-                        if (d.isPlanFrozen !== undefined) setIsPlanFrozen(d.isPlanFrozen);
-                        if (d.fiscalYear) setFiscalYear(d.fiscalYear);
-                        if (d.isCatalogCleared !== undefined) setIsCatalogCleared(d.isCatalogCleared);
-                        if (d.logs) setLogs(d.logs);
-                      }
-                    })
-                    .catch(() => {});
-                }}
-                onToastAlert={handleToast}
-              />
-            )}
           </div>
         </main>
       </div>
+
+      {/* Notification Center Modal */}
+      {showNotificationCenter && currentUser && (
+        <NotificationCenterModal
+          currentUser={currentUser}
+          users={users}
+          requests={requests}
+          departments={departments}
+          workGroups={workGroups}
+          schedule={submissionSchedule}
+          fiscalYear={fiscalYear}
+          onClose={() => setShowNotificationCenter(false)}
+          onApproveUser={handleAdminApproveUser}
+          onBulkApproveUsers={(usernames) => {
+            setUsers(prev => prev.map(u => usernames.includes(u.username) ? { ...u, status: 'approved' } : u));
+            logAction('status_change', 'users', `อนุมัติสิทธิ์การเข้าใช้งานระบบแก่ผู้ใช้ใหม่แบบกลุ่มจำนวน ${usernames.length} บัญชี`);
+          }}
+          onSelectAuditItem={(item) => setSelectedAuditItem(item)}
+          onNavigateToTab={(tab) => {
+            if (tab === 'head') {
+              setActiveRole('head');
+            } else if (tab === 'proc') {
+              setActiveRole('proc');
+            } else if (tab === 'prochead') {
+              setActiveRole('prochead');
+            } else if (tab === 'exec') {
+              setActiveRole('exec');
+            } else if (tab === 'staff' || tab === 'rejected') {
+              setActiveRole('staff');
+            } else if (tab === 'users') {
+              setActiveRole('users');
+            }
+          }}
+          onToastAlert={handleToast}
+        />
+      )}
+
+      {/* Audit Trail Modal */}
+      {selectedAuditItem && (
+        <AuditTrailModal
+          item={selectedAuditItem}
+          onClose={() => setSelectedAuditItem(null)}
+        />
+      )}
+
+      {/* Floating Registration Alert Card for Admin */}
+      {(currentUser?.role === 'admin' || currentUser?.role === 'superadmin') && showFloatingRegAlert && users.filter(u => u.status === 'pending').length > 0 && (
+        <div className="fixed bottom-6 right-6 z-40 max-w-sm w-full bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border-2 border-rose-500/80 p-4.5 space-y-3 animate-in slide-in-from-bottom-5 duration-300">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-600 text-white flex items-center justify-center font-black shadow-md shadow-rose-900/30 shrink-0">
+                <Bell className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <span>มีผู้สมัครสมาชิกใหม่</span>
+                  <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 text-[11px] font-mono font-bold">
+                    {users.filter(u => u.status === 'pending').length} ท่าน
+                  </span>
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  รอผู้ดูแลระบบตรวจสอบและอนุมัติสิทธิ์การเข้าใช้งาน
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowFloatingRegAlert(false)}
+              className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+              title="ปิดการแจ้งเตือนชั่วคราว"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveRole('users');
+                setShowFloatingRegAlert(false);
+              }}
+              className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <UserCheck className="w-4 h-4" />
+              <span>ไปที่หน้าจัดการผู้ใช้</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const pendingUsernames = users.filter(u => u.status === 'pending').map(u => u.username);
+                setUsers(prev => prev.map(u => u.status === 'pending' ? { ...u, status: 'approved' } : u));
+                logAction('status_change', 'users', `อนุมัติสิทธิ์การเข้าใช้งานระบบแก่ผู้ใช้ใหม่ทั้งหมด (${pendingUsernames.length} บัญชี)`);
+                handleToast(`อนุมัติผู้ใช้งานทั้งหมด ${pendingUsernames.length} ท่านเรียบร้อยแล้ว`, 'success');
+                setShowFloatingRegAlert(false);
+              }}
+              className="py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center justify-center gap-1 cursor-pointer"
+              title="อนุมัติผู้สมัครใหม่ทั้งหมดทันที"
+            >
+              <Check className="w-4 h-4" />
+              <span>อนุมัติทั้งหมด</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Change Password Modal */}
       {showChangePasswordModal && currentUser && (

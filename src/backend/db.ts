@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
-import { RequestItem, User, Department, WorkGroup, LogEntry, DepartmentRevisionPermission } from '../frontend/types';
+import { RequestItem, User, Department, WorkGroup, LogEntry, DepartmentRevisionPermission, RequestAuditLog } from '../frontend/types';
 import { SEED_USERS, seedRequests, INITIAL_WORK_GROUPS, DEPARTMENTS, CATALOG } from '../frontend/data/catalog';
 
 // Helper for synchronous password hashing
@@ -41,6 +41,8 @@ interface DbSchema {
   customItems: Record<string, string[]>;
   itemPrices: Record<string, number>;
   materialActive: Record<string, boolean>;
+  customCategories?: Record<string, string>;
+  customUnits?: Record<string, string>;
   revisionPermissions?: Record<string, DepartmentRevisionPermission>;
   isPlanFrozen: boolean;
   fiscalYear: string;
@@ -57,6 +59,8 @@ function initializeDb(): DbSchema {
       const raw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
       const loaded = JSON.parse(raw);
       loaded.logs = loaded.logs || [];
+      loaded.customCategories = loaded.customCategories || {};
+      loaded.customUnits = loaded.customUnits || {};
       // Ensure existing users have hashed passwords
       if (loaded.users) {
         loaded.users = loaded.users.map((u: any) => ({
@@ -79,6 +83,8 @@ function initializeDb(): DbSchema {
     customItems: {},
     itemPrices: {},
     materialActive: {},
+    customCategories: {},
+    customUnits: {},
     isPlanFrozen: false,
     fiscalYear: '2569',
     logs: []
@@ -334,6 +340,41 @@ export async function setupMySQLTables(): Promise<{
     `);
 
     await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS request_audit_logs (
+        id VARCHAR(255) PRIMARY KEY,
+        request_id VARCHAR(255) NOT NULL,
+        timestamp VARCHAR(100) NOT NULL,
+        role VARCHAR(50) NOT NULL,
+        actor_name VARCHAR(255) NOT NULL,
+        action VARCHAR(100) NOT NULL,
+        action_label_th VARCHAR(255) NOT NULL,
+        old_qty INT,
+        new_qty INT,
+        old_status VARCHAR(100),
+        new_status VARCHAR(100),
+        comment TEXT,
+        reason TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_request_id (request_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS custom_categories (
+        id VARCHAR(255) PRIMARY KEY,
+        label VARCHAR(255) NOT NULL,
+        created_at VARCHAR(100)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    await mysqlPool.query(`
+      CREATE TABLE IF NOT EXISTS custom_units (
+        item_name VARCHAR(255) PRIMARY KEY,
+        unit_label VARCHAR(255) NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    await mysqlPool.query(`
       CREATE TABLE IF NOT EXISTS system_logs (
         id VARCHAR(255) PRIMARY KEY,
         timestamp VARCHAR(100) NOT NULL,
@@ -346,7 +387,10 @@ export async function setupMySQLTables(): Promise<{
     `);
 
     // Ensure all tables are utf8mb4_unicode_ci
-    const tablesToConvert = ['system_settings', 'system_state', 'work_groups', 'departments', 'users', 'requests', 'system_logs'];
+    const tablesToConvert = [
+      'system_settings', 'system_state', 'work_groups', 'departments', 'users',
+      'requests', 'request_audit_logs', 'custom_categories', 'custom_units', 'system_logs'
+    ];
     for (const t of tablesToConvert) {
       try {
         await mysqlPool.query(`ALTER TABLE \`${t}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
@@ -562,8 +606,34 @@ async function loadRelationalState(): Promise<DbSchema | null> {
       };
     });
 
-    // Load requests
+    // Load requests & their relational audit logs
     const [reqRows]: any = await conn.query('SELECT * FROM requests');
+
+    let auditLogsByRequestId: Record<string, RequestAuditLog[]> = {};
+    try {
+      const [auditRows]: any = await conn.query('SELECT * FROM request_audit_logs ORDER BY timestamp ASC');
+      if (Array.isArray(auditRows)) {
+        for (const a of auditRows) {
+          const reqId = a.request_id;
+          if (!auditLogsByRequestId[reqId]) auditLogsByRequestId[reqId] = [];
+          auditLogsByRequestId[reqId].push({
+            id: a.id,
+            timestamp: a.timestamp,
+            role: a.role,
+            actorName: fixMojibake(a.actor_name),
+            action: a.action,
+            actionLabelTh: fixMojibake(a.action_label_th),
+            oldQty: a.old_qty !== null ? Number(a.old_qty) : undefined,
+            newQty: a.new_qty !== null ? Number(a.new_qty) : undefined,
+            oldStatus: a.old_status || undefined,
+            newStatus: a.new_status || undefined,
+            comment: fixMojibake(a.comment) || undefined,
+            reason: fixMojibake(a.reason) || undefined
+          });
+        }
+      }
+    } catch (e) {}
+
     const requests: RequestItem[] = reqRows.map((row: any) => {
       const fixedItemName = fixMojibake(row.item_name);
       const fixedUnit = fixMojibake(row.unit);
@@ -611,7 +681,8 @@ async function loadRelationalState(): Promise<DbSchema | null> {
         revisionReason: fixMojibake(row.revision_reason) || undefined,
         revisionStatus: row.revision_status || undefined,
         revisionRequestedAt: row.revision_requested_at || undefined,
-        revisionRequestedBy: fixMojibake(row.revision_requested_by) || undefined
+        revisionRequestedBy: fixMojibake(row.revision_requested_by) || undefined,
+        auditLogs: auditLogsByRequestId[row.id] || undefined
       };
     });
 
@@ -667,6 +738,20 @@ async function loadRelationalState(): Promise<DbSchema | null> {
       }
     } catch (e) {}
 
+    let customCategories: Record<string, string> = {};
+    try {
+      if (settingsMap['customCategories']) {
+        customCategories = JSON.parse(settingsMap['customCategories']);
+      }
+    } catch (e) {}
+
+    let customUnits: Record<string, string> = {};
+    try {
+      if (settingsMap['customUnits']) {
+        customUnits = JSON.parse(settingsMap['customUnits']);
+      }
+    } catch (e) {}
+
     const isPlanFrozen = settingsMap['isPlanFrozen'] === 'true';
     const isCatalogCleared = settingsMap['isCatalogCleared'] === 'true';
     const fiscalYear = settingsMap['fiscalYear'] || '2569';
@@ -679,6 +764,8 @@ async function loadRelationalState(): Promise<DbSchema | null> {
       customItems,
       itemPrices,
       materialActive,
+      customCategories,
+      customUnits,
       revisionPermissions,
       isPlanFrozen,
       fiscalYear,
@@ -865,6 +952,67 @@ async function saveRelationalState(state: Partial<DbSchema>) {
           r.revisionRequestedAt || null,
           r.revisionRequestedBy || null
         ]);
+
+        // Save audit logs for this request if present
+        if (r.auditLogs && Array.isArray(r.auditLogs) && r.auditLogs.length > 0) {
+          for (const a of r.auditLogs) {
+            await conn.query(`
+              INSERT INTO request_audit_logs (
+                id, request_id, timestamp, role, actor_name, action, action_label_th,
+                old_qty, new_qty, old_status, new_status, comment, reason
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON DUPLICATE KEY UPDATE
+                timestamp = VALUES(timestamp),
+                role = VALUES(role),
+                actor_name = VALUES(actor_name),
+                action = VALUES(action),
+                action_label_th = VALUES(action_label_th),
+                old_qty = VALUES(old_qty),
+                new_qty = VALUES(new_qty),
+                old_status = VALUES(old_status),
+                new_status = VALUES(new_status),
+                comment = VALUES(comment),
+                reason = VALUES(reason)
+            `, [
+              a.id || `LOG-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+              r.id,
+              a.timestamp || new Date().toISOString(),
+              a.role || 'staff',
+              a.actorName || 'ผู้ดำเนินการ',
+              a.action || 'submit',
+              a.actionLabelTh || 'บันทึกรายการ',
+              a.oldQty !== undefined && a.oldQty !== null ? Number(a.oldQty) : null,
+              a.newQty !== undefined && a.newQty !== null ? Number(a.newQty) : null,
+              a.oldStatus || null,
+              a.newStatus || null,
+              a.comment || null,
+              a.reason || null
+            ]);
+          }
+        }
+      }
+    }
+
+    // 4.1 Save custom_categories to relational table
+    if (state.customCategories) {
+      for (const [id, label] of Object.entries(state.customCategories)) {
+        await conn.query(`
+          INSERT INTO custom_categories (id, label, created_at)
+          VALUES (?, ?, ?)
+          ON DUPLICATE KEY UPDATE label = VALUES(label)
+        `, [id, label, new Date().toISOString()]);
+      }
+    }
+
+    // 4.2 Save custom_units to relational table
+    if (state.customUnits) {
+      for (const [item_name, unit_label] of Object.entries(state.customUnits)) {
+        await conn.query(`
+          INSERT INTO custom_units (item_name, unit_label)
+          VALUES (?, ?)
+          ON DUPLICATE KEY UPDATE unit_label = VALUES(unit_label)
+        `, [item_name, unit_label]);
       }
     }
 
@@ -910,6 +1058,12 @@ async function saveRelationalState(state: Partial<DbSchema>) {
     }
     if (state.materialActive !== undefined) {
       settingsToSave['materialActive'] = JSON.stringify(state.materialActive);
+    }
+    if (state.customCategories !== undefined) {
+      settingsToSave['customCategories'] = JSON.stringify(state.customCategories);
+    }
+    if (state.customUnits !== undefined) {
+      settingsToSave['customUnits'] = JSON.stringify(state.customUnits);
     }
     if (state.revisionPermissions !== undefined) {
       settingsToSave['revisionPermissions'] = JSON.stringify(state.revisionPermissions);

@@ -3,7 +3,28 @@ import { CategoryId, Department, User, UserRole, WorkGroup } from '../types';
 import { CATEGORY_LABELS, CATEGORY_ORDER, DEPARTMENTS, INITIAL_WORK_GROUPS, deptName } from '../data/catalog';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
-import { UserCheck, Edit3, Key, Check, X, Shield, Users as UsersIcon, ArrowUpDown, Eye, EyeOff, Lock, Building2 } from 'lucide-react';
+import { 
+  UserCheck, 
+  Edit3, 
+  Key, 
+  Check, 
+  X, 
+  Shield, 
+  Users as UsersIcon, 
+  ArrowUpDown, 
+  Eye, 
+  EyeOff, 
+  Lock, 
+  Building2,
+  CheckSquare,
+  Square,
+  MinusSquare,
+  Trash2,
+  KeyRound,
+  Layers,
+  Sparkles,
+  AlertCircle
+} from 'lucide-react';
 
 interface AdminUsersViewProps {
   users: User[];
@@ -13,6 +34,11 @@ interface AdminUsersViewProps {
   onApproveUser: (username: string) => void;
   onUpdateUser: (username: string, name: string, roles: UserRole[], deptId: string, status?: User['status']) => void;
   onResetPassword: (username: string, newPassword: string) => void;
+  onBulkApproveUsers?: (usernames: string[]) => void;
+  onBulkChangeDept?: (usernames: string[], targetDeptId: string) => void;
+  onBulkResetPassword?: (usernames: string[], newPassword: string) => void;
+  onBulkChangeStatus?: (usernames: string[], status: User['status']) => void;
+  onBulkDeleteUsers?: (usernames: string[]) => void;
   onRequestConfirm: (opts: { title: string; message: string; confirmText?: string; variant?: 'primary' | 'danger' | 'warning'; onConfirm: () => void }) => void;
   onToastAlert: (msg: string, type?: 'success' | 'error' | 'info') => void;
   currentUser: User;
@@ -26,6 +52,11 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
   onApproveUser,
   onUpdateUser,
   onResetPassword,
+  onBulkApproveUsers,
+  onBulkChangeDept,
+  onBulkResetPassword,
+  onBulkChangeStatus,
+  onBulkDeleteUsers,
   onRequestConfirm,
   onToastAlert,
   currentUser
@@ -34,7 +65,16 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
   const workGroupsList = workGroups || INITIAL_WORK_GROUPS;
   const [editingUsername, setEditingUsername] = useState<string | null>(null);
   
-  // Dedicated Password Reset Modal State
+  // Selection state for batch operations
+  const [selectedUsernames, setSelectedUsernames] = useState<string[]>([]);
+  const [bulkDeptModalOpen, setBulkDeptModalOpen] = useState(false);
+  const [bulkTargetDeptId, setBulkTargetDeptId] = useState(departmentsList[0]?.id || 'thurakan');
+  const [bulkPasswordModalOpen, setBulkPasswordModalOpen] = useState(false);
+  const [bulkNewPassword, setBulkNewPassword] = useState('');
+  const [bulkShowPassword, setBulkShowPassword] = useState(false);
+  const [bulkPwError, setBulkPwError] = useState('');
+
+  // Dedicated Password Reset Modal State (Single User)
   const [resetModalUser, setResetModalUser] = useState<User | null>(null);
   const [modalNewPassword, setModalNewPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -208,6 +248,196 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
     setPwError('');
   };
 
+  // Bulk Selection Handlers
+  const handleToggleSelectUser = (username: string) => {
+    setSelectedUsernames(prev => 
+      prev.includes(username) 
+        ? prev.filter(u => u !== username) 
+        : [...prev, username]
+    );
+  };
+
+  // Pagination slice
+  const numericSize = pageSize === 'all' ? sortedUsers.length || 1 : pageSize;
+  const totalPages = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(sortedUsers.length / numericSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageUsers = pageSize === 'all' ? sortedUsers : sortedUsers.slice((safePage - 1) * numericSize, safePage * numericSize);
+
+  const isAllPageSelected = pageUsers.length > 0 && pageUsers.every(u => selectedUsernames.includes(u.username));
+  const isSomePageSelected = pageUsers.some(u => selectedUsernames.includes(u.username)) && !isAllPageSelected;
+
+  const handleToggleSelectAllPage = () => {
+    if (isAllPageSelected) {
+      const pageUsernames = pageUsers.map(u => u.username);
+      setSelectedUsernames(prev => prev.filter(u => !pageUsernames.includes(u)));
+    } else {
+      const pageUsernames = pageUsers.map(u => u.username);
+      setSelectedUsernames(prev => Array.from(new Set([...prev, ...pageUsernames])));
+    }
+  };
+
+  const handleSelectAllFiltered = () => {
+    setSelectedUsernames(sortedUsers.map(u => u.username));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedUsernames([]);
+  };
+
+  // Bulk Actions
+  const handleBulkApprove = () => {
+    if (currentUser?.username !== 'admin') {
+      onToastAlert('สิทธิ์ในการอนุมัติผู้ใช้งาน จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    const pendingSelected = users.filter(u => selectedUsernames.includes(u.username) && u.status === 'pending');
+    if (pendingSelected.length === 0) {
+      onToastAlert('ในรายการที่เลือกไม่มีผู้ใช้งานที่สถานะรออนุมัติ (Pending)', 'info');
+      return;
+    }
+
+    onRequestConfirm({
+      title: 'ยืนยันการอนุมัติสิทธิ์ผู้ใช้งานพร้อมกัน',
+      message: `คุณต้องการอนุมัติการใช้งานให้แก่ผู้ใช้จำนวน ${pendingSelected.length} บัญชี หรือไม่?`,
+      confirmText: `อนุมัติทั้งหมด (${pendingSelected.length})`,
+      variant: 'primary',
+      onConfirm: () => {
+        if (onBulkApproveUsers) {
+          onBulkApproveUsers(pendingSelected.map(u => u.username));
+        } else {
+          pendingSelected.forEach(u => onApproveUser(u.username));
+        }
+        onToastAlert(`อนุมัติผู้ใช้งานจำนวน ${pendingSelected.length} บัญชี สำเร็จเรียบร้อยแล้ว`, 'success');
+        setSelectedUsernames([]);
+      }
+    });
+  };
+
+  const handleBulkChangeDeptConfirm = () => {
+    if (currentUser?.username !== 'admin') {
+      onToastAlert('สิทธิ์ในการย้ายกลุ่มงาน/ฝ่าย จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    if (selectedUsernames.length === 0) return;
+
+    const targetDept = departmentsList.find(d => d.id === bulkTargetDeptId);
+    onRequestConfirm({
+      title: 'ยืนยันการย้ายหน่วยงาน/ฝ่ายแบบกลุ่ม',
+      message: `คุณต้องการย้ายผู้ใช้งานจำนวน ${selectedUsernames.length} บัญชี ไปยังฝ่าย '${targetDept?.name || bulkTargetDeptId}' หรือไม่?`,
+      confirmText: 'ยืนยันการย้ายฝ่าย',
+      variant: 'primary',
+      onConfirm: () => {
+        if (onBulkChangeDept) {
+          onBulkChangeDept(selectedUsernames, bulkTargetDeptId);
+        } else {
+          selectedUsernames.forEach(uname => {
+            const u = users.find(x => x.username === uname);
+            if (u) {
+              const roles = u.roles && u.roles.length > 0 ? u.roles : [u.role];
+              onUpdateUser(u.username, u.name, roles, bulkTargetDeptId, u.status);
+            }
+          });
+        }
+        onToastAlert(`ย้ายผู้ใช้งานจำนวน ${selectedUsernames.length} บัญชี ไปยัง '${targetDept?.name}' สำเร็จ`, 'success');
+        setBulkDeptModalOpen(false);
+        setSelectedUsernames([]);
+      }
+    });
+  };
+
+  const handleBulkResetPasswordConfirm = () => {
+    if (currentUser?.username !== 'admin') {
+      onToastAlert('สิทธิ์ในการรีเซ็ตรหัสผ่าน จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    if (!bulkNewPassword || bulkNewPassword.length < 4) {
+      setBulkPwError('รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร');
+      return;
+    }
+
+    onRequestConfirm({
+      title: 'ยืนยันการรีเซ็ตรหัสผ่านแบบกลุ่ม',
+      message: `คุณต้องการเปลี่ยนรหัสผ่านของผู้ใช้งานที่เลือกจำนวน ${selectedUsernames.length} บัญชี เป็นรหัสผ่านใหม่นี้หรือไม่?`,
+      confirmText: 'ยืนยันเปลี่ยนรหัสผ่าน',
+      variant: 'warning',
+      onConfirm: () => {
+        if (onBulkResetPassword) {
+          onBulkResetPassword(selectedUsernames, bulkNewPassword);
+        } else {
+          selectedUsernames.forEach(uname => {
+            onResetPassword(uname, bulkNewPassword);
+          });
+        }
+        onToastAlert(`รีเซ็ตรหัสผ่านให้แก่ผู้ใช้จำนวน ${selectedUsernames.length} บัญชี เรียบร้อยแล้ว`, 'success');
+        setBulkPasswordModalOpen(false);
+        setBulkNewPassword('');
+        setBulkPwError('');
+        setSelectedUsernames([]);
+      }
+    });
+  };
+
+  const handleBulkSetStatus = (status: User['status'], label: string) => {
+    if (currentUser?.username !== 'admin') {
+      onToastAlert('สิทธิ์ในการเปลี่ยนสถานะ จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    const safeSelected = selectedUsernames.filter(u => u !== 'admin');
+    if (safeSelected.length === 0) {
+      onToastAlert('ไม่สามารถแก้ไขสถานะของบัญชี Super Admin ได้', 'error');
+      return;
+    }
+
+    onRequestConfirm({
+      title: `ยืนยันการปรับสถานะเป็น '${label}'`,
+      message: `คุณต้องการปรับสถานะของผู้ใช้งานจำนวน ${safeSelected.length} บัญชี เป็น '${label}' หรือไม่?`,
+      confirmText: `ปรับสถานะเป็น ${label}`,
+      variant: status === 'inactive' ? 'danger' : 'primary',
+      onConfirm: () => {
+        if (onBulkChangeStatus) {
+          onBulkChangeStatus(safeSelected, status);
+        } else {
+          safeSelected.forEach(uname => {
+            const u = users.find(x => x.username === uname);
+            if (u) {
+              const roles = u.roles && u.roles.length > 0 ? u.roles : [u.role];
+              onUpdateUser(u.username, u.name, roles, u.deptId, status);
+            }
+          });
+        }
+        onToastAlert(`ปรับสถานะของผู้ใช้ ${safeSelected.length} บัญชี เป็น '${label}' เรียบร้อยแล้ว`, 'success');
+        setSelectedUsernames([]);
+      }
+    });
+  };
+
+  const handleBulkDelete = () => {
+    if (currentUser?.username !== 'admin') {
+      onToastAlert('สิทธิ์ในการลบผู้ใช้งาน จำกัดเฉพาะ Super Admin เท่านั้น', 'error');
+      return;
+    }
+    const safeSelected = selectedUsernames.filter(u => u !== 'admin' && u !== currentUser?.username);
+    if (safeSelected.length === 0) {
+      onToastAlert('ไม่สามารถลบบัญชี Super Admin หรือบัญชีที่กำลังเข้าสู่ระบบอยู่ได้', 'error');
+      return;
+    }
+
+    onRequestConfirm({
+      title: 'ยืนยันการลบบัญชีผู้ใช้งานออกจากระบบ',
+      message: `คำเตือน: คุณต้องการลบบัญชีผู้ใช้งานจำนวน ${safeSelected.length} บัญชี ออกจากระบบอย่างถาวรหรือไม่?`,
+      confirmText: `ลบ ${safeSelected.length} บัญชี`,
+      variant: 'danger',
+      onConfirm: () => {
+        if (onBulkDeleteUsers) {
+          onBulkDeleteUsers(safeSelected);
+        } else {
+          onToastAlert(`ลบผู้ใช้งานจำนวน ${safeSelected.length} บัญชี สำเร็จ`, 'success');
+        }
+        setSelectedUsernames([]);
+      }
+    });
+  };
+
   const roleLabelMap: Record<UserRole, string> = {
     staff: 'ผู้ขอ',
     head: 'หัวหน้ากลุ่มงาน/ฝ่าย',
@@ -216,12 +446,6 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
     exec: 'ผู้บริหาร',
     admin: 'ผู้ดูแลระบบ'
   };
-
-  // Pagination slice
-  const numericSize = pageSize === 'all' ? sortedUsers.length || 1 : pageSize;
-  const totalPages = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(sortedUsers.length / numericSize));
-  const safePage = Math.min(currentPage, totalPages);
-  const pageUsers = pageSize === 'all' ? sortedUsers : sortedUsers.slice((safePage - 1) * numericSize, safePage * numericSize);
 
   return (
     <div className="space-y-5">
@@ -239,7 +463,7 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
         }}
       />
 
-      {/* Work Group & Department Filter Pills Bar (Image 2 Style) */}
+      {/* Work Group & Department Filter Pills Bar */}
       <div className="bg-white border border-slate-200 rounded-2xl p-3.5 shadow-2xs space-y-3">
         {/* Row 1: กลุ่มงาน */}
         <div className="flex flex-wrap items-center gap-2">
@@ -247,7 +471,7 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
             <span className="w-2.5 h-2.5 rounded-full bg-indigo-600"></span>
             <span>กลุ่มงาน:</span>
           </div>
-          
+
           <button
             type="button"
             onClick={() => {
@@ -264,7 +488,7 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
             <span className={`w-2 h-2 rounded-full ${selectedWgId === 'all' ? 'bg-slate-300' : 'bg-indigo-500'}`} />
             <span>ทั้งหมดทุกกลุ่มงาน</span>
             <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${selectedWgId === 'all' ? 'bg-white/20 text-white' : 'bg-indigo-200/60 text-indigo-950'}`}>
-              {getWgUserCount('all')}
+              {users.length}
             </span>
           </button>
 
@@ -353,12 +577,119 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
         </div>
       </div>
 
+      {/* Floating / Sticky Bulk Action Bar for Selected Users */}
+      {selectedUsernames.length > 0 && (
+        <div className="bg-indigo-950 text-white border border-indigo-700/60 rounded-2xl p-3.5 shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center font-bold text-white shadow-sm shrink-0">
+              <CheckSquare className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-white flex items-center gap-2">
+                <span>เลือกแล้ว <span className="text-amber-300 font-extrabold text-sm">{selectedUsernames.length}</span> รายการ</span>
+                <span className="text-indigo-400">|</span>
+                <button
+                  type="button"
+                  onClick={handleSelectAllFiltered}
+                  className="text-[11px] text-indigo-300 hover:text-white underline cursor-pointer"
+                >
+                  เลือกทั้งหมดตามตัวกรอง ({sortedUsers.length} รายการ)
+                </button>
+              </div>
+              <div className="text-[11px] text-indigo-300">
+                เลือกคำสั่งที่ต้องการทำกับผู้ใช้ที่เลือกไว้
+              </div>
+            </div>
+          </div>
+
+          {/* Action Buttons Toolbar */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleBulkApprove}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              title="อนุมัติผู้ใช้ที่เลือก (สำหรับสถานะ Pending)"
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              อนุมัติที่เลือก
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setBulkDeptModalOpen(true)}
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              title="เปลี่ยนกลุ่มงาน / ฝ่ายพร้อมกัน"
+            >
+              <Building2 className="w-3.5 h-3.5" />
+              ย้ายฝ่าย
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setBulkPasswordModalOpen(true);
+                setBulkNewPassword('');
+                setBulkPwError('');
+              }}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              title="รีเซ็ตรหัสผ่านแบบกลุ่ม"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              รีเซ็ตรหัสผ่าน
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleBulkSetStatus('inactive', 'ระงับการใช้งาน')}
+              className="px-2.5 py-1.5 bg-rose-900/80 hover:bg-rose-800 text-rose-200 border border-rose-700 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              title="ระงับการใช้งานที่เลือก"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              ระงับใช้งาน
+            </button>
+
+            <button
+              type="button"
+              onClick={handleBulkDelete}
+              className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+              title="ลบผู้ใช้ที่เลือกออกจากระบบ"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              ลบ
+            </button>
+
+            <button
+              type="button"
+              onClick={handleClearSelection}
+              className="px-2.5 py-1.5 bg-indigo-900 hover:bg-indigo-800 text-indigo-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ml-1"
+            >
+              <X className="w-3.5 h-3.5" />
+              ยกเลิก
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Users Table Card */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-4">
         {pendingCount > 0 && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-xl text-xs font-bold flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-            มีผู้สมัครใหม่รอการอนุมัติสิทธิ์ {pendingCount} บัญชี
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 p-3 rounded-xl text-xs font-bold flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+              <span>มีผู้สมัครใหม่รอการอนุมัติสิทธิ์ {pendingCount} บัญชี</span>
+            </div>
+            {currentUser?.username === 'admin' && (
+              <button
+                type="button"
+                onClick={() => {
+                  const pendingUsernames = users.filter(u => u.status === 'pending').map(u => u.username);
+                  setSelectedUsernames(pendingUsernames);
+                }}
+                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer shadow-2xs"
+              >
+                เลือกทั้งหมดที่รออนุมัติ ({pendingCount})
+              </button>
+            )}
           </div>
         )}
 
@@ -366,6 +697,23 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
           <table className="w-full text-base text-left">
             <thead className="bg-slate-50 text-slate-600 uppercase font-mono text-sm border-b border-slate-200 select-none">
               <tr>
+                {/* Select All Checkbox Header */}
+                <th className="p-2.5 w-10 text-center">
+                  <button
+                    type="button"
+                    onClick={handleToggleSelectAllPage}
+                    className="p-1 rounded hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer flex items-center justify-center"
+                    title={isAllPageSelected ? 'ยกเลิกการเลือกหน้านี้' : 'เลือกทั้งหมดในหน้านี้'}
+                  >
+                    {isAllPageSelected ? (
+                      <CheckSquare className="w-4 h-4 text-indigo-600" />
+                    ) : isSomePageSelected ? (
+                      <MinusSquare className="w-4 h-4 text-indigo-600" />
+                    ) : (
+                      <Square className="w-4 h-4 text-slate-400" />
+                    )}
+                  </button>
+                </th>
                 <th 
                   onClick={() => handleHeaderSort('name')}
                   className="p-2.5 cursor-pointer hover:bg-slate-100 transition-colors"
@@ -419,9 +767,28 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
                 const isEditing = editingUsername === u.username;
                 const userRolesList = u.roles && u.roles.length > 0 ? u.roles : [u.role];
                 const isLockedSuperAdmin = u.username === 'admin' && currentUser?.username !== 'admin';
+                const isSelected = selectedUsernames.includes(u.username);
 
                 return (
-                  <tr key={u.username} className="hover:bg-slate-50/80 transition-colors">
+                  <tr 
+                    key={u.username} 
+                    className={`hover:bg-slate-50/80 transition-colors ${isSelected ? 'bg-indigo-50/40' : ''}`}
+                  >
+                    {/* Row Checkbox */}
+                    <td className="p-2.5 text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleSelectUser(u.username)}
+                        className="p-1 rounded hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer flex items-center justify-center"
+                      >
+                        {isSelected ? (
+                          <CheckSquare className="w-4 h-4 text-indigo-600" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-400" />
+                        )}
+                      </button>
+                    </td>
+
                     <td className="p-2.5 font-bold text-slate-900">
                       {isEditing ? (
                         <input
@@ -638,26 +1005,25 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() => handleOpenResetPasswordModal(u)}
-                                className="px-2.5 py-1 text-slate-700 hover:text-amber-800 hover:bg-amber-50 border border-slate-200 hover:border-amber-300 rounded-lg transition-colors flex items-center justify-center gap-1.5 text-[11px] font-semibold cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
-                                title="รีเซ็ตรหัสผ่าน"
+                                className="px-2 py-1 text-xs font-bold text-amber-700 hover:text-amber-800 hover:bg-amber-50 border border-amber-200 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                                title="ตั้งรหัสผ่านใหม่ให้ผู้ใช้งานนี้"
                               >
-                                <Key className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                <span className="whitespace-nowrap">รีเซ็ตรหัสผ่าน</span>
+                                <Key className="w-3.5 h-3.5 text-amber-600" />
+                                <span>รหัสผ่าน</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => startEdit(u)}
-                                className="px-2.5 py-1 text-slate-700 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-lg transition-colors flex items-center justify-center gap-1.5 text-[11px] font-semibold cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
-                                title="แก้ไขข้อมูล"
+                                className="px-2.5 py-1 text-xs font-bold text-slate-700 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
                               >
-                                <Edit3 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                                <span className="whitespace-nowrap">แก้ไข</span>
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>แก้ไข</span>
                               </button>
                             </>
                           ) : (
-                            <div className="flex items-center gap-1 text-slate-400 font-sans">
+                            <div className="flex items-center justify-end gap-1 text-slate-400 font-sans">
                               <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                              <span className="text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg text-[10px] font-bold">เฉพาะ Super Admin</span>
+                              <span className="text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-lg text-[10px] font-bold">เฉพาะ Super Admin</span>
                             </div>
                           )}
                         </div>
@@ -679,20 +1045,178 @@ export const AdminUsersView: React.FC<AdminUsersViewProps> = ({
         />
       </div>
 
-      {/* Redesigned Beautiful Reset Password Modal Overlay */}
+      {/* Bulk Change Department Modal */}
+      {bulkDeptModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="bg-gradient-to-r from-indigo-700 to-indigo-900 px-5 py-4 flex items-center justify-between text-white">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-5 h-5 text-indigo-300" />
+                <h3 className="text-sm font-bold">ย้ายกลุ่มงาน / ฝ่ายผู้ใช้งานแบบกลุ่ม</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBulkDeptModalOpen(false)}
+                className="text-white/80 hover:text-white bg-white/10 hover:bg-white/20 p-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3.5 space-y-1">
+                <div className="text-[11px] font-bold text-indigo-700 uppercase tracking-wider">
+                  จำนวนผู้ใช้งานที่เลือก: {selectedUsernames.length} บัญชี
+                </div>
+                <div className="text-xs text-indigo-900 font-mono truncate">
+                  {selectedUsernames.slice(0, 5).map(u => '@' + u).join(', ')}
+                  {selectedUsernames.length > 5 ? ` และอีก ${selectedUsernames.length - 5} บัญชี...` : ''}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700">
+                  เลือกกลุ่มงาน / ฝ่ายปลายทางที่ต้องการย้ายไป <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={bulkTargetDeptId}
+                  onChange={e => setBulkTargetDeptId(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  {departmentsList.map(d => {
+                    const wg = workGroupsList.find(w => w.id === d.workGroupId);
+                    return (
+                      <option key={d.id} value={d.id}>
+                        {d.name} {wg ? `(${wg.name})` : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setBulkDeptModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkChangeDeptConfirm}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Check className="w-4 h-4" />
+                  ยืนยันการย้ายฝ่าย
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Reset Password Modal */}
+      {bulkPasswordModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="bg-gradient-to-r from-amber-600 to-orange-600 px-5 py-4 flex items-center justify-between text-white">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-amber-200" />
+                <h3 className="text-sm font-bold">รีเซ็ตรหัสผ่านผู้ใช้งานแบบกลุ่ม ({selectedUsernames.length} บัญชี)</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBulkPasswordModalOpen(false)}
+                className="text-white/80 hover:text-white bg-white/10 hover:bg-white/20 p-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 space-y-1">
+                <div className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">
+                  จำนวนผู้ใช้ที่จะถูกเปลี่ยนรหัสผ่าน: {selectedUsernames.length} บัญชี
+                </div>
+                <div className="text-xs text-amber-900 font-mono truncate">
+                  {selectedUsernames.slice(0, 5).map(u => '@' + u).join(', ')}
+                  {selectedUsernames.length > 5 ? ` และอีก ${selectedUsernames.length - 5} บัญชี...` : ''}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700">
+                  รหัสผ่านใหม่ร่วมกัน <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <input
+                    type={bulkShowPassword ? 'text' : 'password'}
+                    value={bulkNewPassword}
+                    onChange={e => {
+                      setBulkNewPassword(e.target.value);
+                      if (bulkPwError) setBulkPwError('');
+                    }}
+                    placeholder="ป้อนรหัสผ่านใหม่ร่วมกัน (อย่างน้อย 4 ตัวอักษร)"
+                    className={`w-full pl-9 pr-10 py-2.5 bg-slate-50 border ${
+                      bulkPwError ? 'border-rose-400 focus:ring-rose-200' : 'border-slate-300 focus:border-amber-500 focus:ring-amber-100'
+                    } rounded-xl text-xs font-medium focus:outline-none focus:ring-2 transition-all`}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setBulkShowPassword(!bulkShowPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                  >
+                    {bulkShowPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {bulkPwError ? (
+                  <p className="text-[11px] font-semibold text-rose-600 flex items-center gap-1 mt-1">
+                    <X className="w-3 h-3" /> {bulkPwError}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    รหัสผ่านนี้จะมีผลกับผู้ใช้งานทุกคนที่เลือกไว้ในครั้งนี้
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setBulkPasswordModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkResetPasswordConfirm}
+                  disabled={!bulkNewPassword || bulkNewPassword.length < 4}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Check className="w-4 h-4" />
+                  ยืนยันเปลี่ยนรหัสผ่าน
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dedicated Reset Password Modal for Single User */}
       {resetModalUser && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden transform transition-all animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-150">
             {/* Modal Header */}
-            <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 p-5 text-white flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-white/20 backdrop-blur-md rounded-xl border border-white/20">
-                  <Key className="w-6 h-6 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-white">เปลี่ยนรหัสผ่านผู้ใช้งาน</h3>
-                  <p className="text-xs text-amber-100 mt-0.5">กำหนดรหัสผ่านใหม่สำหรับผู้ใช้งานในระบบ</p>
-                </div>
+            <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 px-5 py-4 flex items-center justify-between text-white">
+              <div className="flex items-center gap-2">
+                <Key className="w-5 h-5 text-amber-200" />
+                <h3 className="text-sm font-bold">รีเซ็ตรหัสผ่านผู้ใช้งาน (Super Admin)</h3>
               </div>
               <button
                 type="button"

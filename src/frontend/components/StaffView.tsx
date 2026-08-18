@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { CategoryId, RequestItem, User, Department, WorkGroup, DepartmentRevisionPermission } from '../types';
+import { CategoryId, RequestItem, User, Department, WorkGroup, DepartmentRevisionPermission, SubmissionSchedule } from '../types';
 import { CategoryBadge } from './CategoryBadge';
+import { calculateSpike, checkSubmissionOpen } from '../utils/workflowHelper';
 import { 
   CATALOG, 
   ALL_ITEMS,
@@ -12,13 +13,16 @@ import {
   guessUnit, 
   historyFor, 
   STATUS_LABEL,
-  getItemCategory
+  getItemCategory,
+  getItemGpscCode,
+  getItemStockInfo
 } from '../data/catalog';
 import { MiniBarsChart } from './MiniBarsChart';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
+import { AuditTrailModal } from './AuditTrailModal';
 import { sortItems } from '../utils/sortHelper';
-import { Plus, Info, Send, AlertCircle, FileText, ArrowUpDown, Edit3, CheckCircle2, TrendingDown, TrendingUp, Minus, UserCheck, PackageCheck, Crown, ArrowRightLeft, Clock, Filter, Search, ShieldCheck, Sparkles, Unlock, Lock, RefreshCw, XCircle, PlusCircle } from 'lucide-react';
+import { Plus, Info, Send, AlertCircle, FileText, ArrowUpDown, Edit3, CheckCircle2, TrendingDown, TrendingUp, Minus, UserCheck, PackageCheck, Crown, ArrowRightLeft, Clock, Filter, Search, ShieldCheck, Sparkles, Unlock, Lock, RefreshCw, XCircle, PlusCircle, Zap, History, SlidersHorizontal } from 'lucide-react';
 
 interface StaffViewProps {
   currentUser: User;
@@ -32,6 +36,7 @@ interface StaffViewProps {
   isPlanFrozen: boolean;
   onRequestConfirm: (opts: { title: string; message: string; confirmText?: string; variant?: 'primary' | 'danger' | 'warning'; onConfirm: () => void }) => void;
   onToastAlert: (msg: string, type?: 'success' | 'error' | 'info') => void;
+  schedule?: SubmissionSchedule;
   departments: Department[];
   workGroups: WorkGroup[];
 }
@@ -42,6 +47,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
   customItems,
   fiscalYear,
   revisionPermissions = {},
+  schedule,
   onSubmitRequests,
   onSubmitRevisionPlan,
   onAddCustomItem,
@@ -59,6 +65,8 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const [selectedFiscalYearFilter, setSelectedFiscalYearFilter] = useState<string>('all');
   const [selectedDeptId, setSelectedDeptId] = useState<string>(currentUser.deptId || 'thurakan');
   const [searchTerm, setSearchTerm] = useState('');
+  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'adequate' | 'excess'>('all');
+  const [selectedAuditItem, setSelectedAuditItem] = useState<RequestItem | null>(null);
   const [sortField, setSortField] = useState<'name' | 'lastYear' | 'requested' | 'diff'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
@@ -110,8 +118,21 @@ export const StaffView: React.FC<StaffViewProps> = ({
     return Array.from(new Set([...(CATALOG[selectedCategory] || []), ...customForCat]));
   }, [selectedCategory, customItems]);
   
-  // Search filter for catalog items
-  const filteredRaw = rawItems.filter(item => item.toLowerCase().includes(searchTerm.toLowerCase().trim()));
+  // Search filter for catalog items (including GPSC & stock status)
+  const filteredRaw = useMemo(() => {
+    return rawItems.filter(item => {
+      const q = searchTerm.toLowerCase().trim();
+      const gpsc = getItemGpscCode(item).toLowerCase();
+      const matchSearch = q === '' || item.toLowerCase().includes(q) || gpsc.includes(q);
+      if (!matchSearch) return false;
+
+      if (stockFilter !== 'all') {
+        const { stockStatus } = getItemStockInfo(item);
+        if (stockStatus !== stockFilter) return false;
+      }
+      return true;
+    });
+  }, [rawItems, searchTerm, stockFilter]);
   
   const handleHeaderSort = (field: 'name' | 'lastYear' | 'requested' | 'diff') => {
     if (sortField === field) {
@@ -138,6 +159,51 @@ export const StaffView: React.FC<StaffViewProps> = ({
     }
     return sortOrder === 'asc' ? res : -res;
   });
+
+  // Quick fill preset helper
+  const handleQuickFill = (mode: 'lastYear100' | 'lastYearPlus5' | 'lastYearPlus10' | 'avg3Years' | 'clear') => {
+    if (isPlanFrozen) {
+      onToastAlert('ระบบถูกปิดรับคำขอแล้ว ไม่สามารถแก้ไขได้', 'error');
+      return;
+    }
+    const newInputs = { ...qtyInputs };
+    if (mode === 'clear') {
+      sortedItems.forEach(name => {
+        delete newInputs[name];
+      });
+      setQtyInputs(newInputs);
+      onToastAlert('ล้างค่าจำนวนที่กรอกทั้งหมดเรียบร้อยแล้ว', 'info');
+      return;
+    }
+
+    let count = 0;
+    sortedItems.forEach(name => {
+      const hist = historyFor(name);
+      const last = hist[2568] || 0;
+      let val = 0;
+      if (mode === 'lastYear100') {
+        val = last;
+      } else if (mode === 'lastYearPlus5') {
+        val = Math.round(last * 1.05);
+      } else if (mode === 'lastYearPlus10') {
+        val = Math.round(last * 1.10);
+      } else if (mode === 'avg3Years') {
+        const avg = ((hist[2566] || 0) + (hist[2567] || 0) + (hist[2568] || 0)) / 3;
+        val = Math.round(avg);
+      }
+      if (val > 0) {
+        newInputs[name] = val;
+        count++;
+      }
+    });
+
+    setQtyInputs(newInputs);
+    const modeLabel = 
+      mode === 'lastYear100' ? 'ดึงยอดใช้จริงปี 2568 (100%)' :
+      mode === 'lastYearPlus5' ? 'ดึงยอดปี 2568 + 5%' :
+      mode === 'lastYearPlus10' ? 'ดึงยอดปี 2568 + 10%' : 'ดึงค่าเฉลี่ย 3 ปีย้อนหลัง';
+    onToastAlert(`ปรับปรุงค่าตั้งต้นสำเร็จ (${modeLabel}) จำนวน ${count} รายการ`, 'success');
+  };
 
   // Department requests filter (Filtered by selected category, fiscal year & search term as well)
   const deptRequests = useMemo(() => {
@@ -460,6 +526,12 @@ export const StaffView: React.FC<StaffViewProps> = ({
   };
 
   const handleSubmit = () => {
+    const scheduleCheck = checkSubmissionOpen(schedule);
+    if (scheduleCheck.isClosed && !schedule?.allowLateSubmission && !isDeptUnlockedForRevision) {
+      onToastAlert(`ระบบปิดรับคำขอประจำปีงบประมาณ ${fiscalYear} แล้ว (${scheduleCheck.statusLabelTh}) กรุณาติดต่อฝ่ายพัสดุหรือผู้ดูแลระบบ`, 'error');
+      return;
+    }
+
     const itemsToSubmit = Object.entries(qtyInputs)
       .filter(([_, qty]) => Number(qty) > 0)
       .map(([itemName, qtyRequested]) => ({ itemName, qtyRequested: Number(qtyRequested) }));
@@ -619,6 +691,48 @@ export const StaffView: React.FC<StaffViewProps> = ({
       {/* TAB 1: แบบสำรวจรายการขอจัดซื้อ (รูปที่ 2 อยู่บน รูปที่ 1) */}
       {activeTab === 'request' && (
         <div className="space-y-5">
+          {/* Submission Schedule Status Banner */}
+          {schedule && (() => {
+            const schedInfo = checkSubmissionOpen(schedule);
+            return (
+              <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs ${
+                schedInfo.isClosed && !schedule.allowLateSubmission && !isDeptUnlockedForRevision
+                  ? 'bg-rose-50 border-rose-200 text-rose-900'
+                  : 'bg-indigo-50/70 border-indigo-200 text-indigo-950'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-xl text-white font-black text-xs shrink-0 ${
+                    schedInfo.isClosed && !schedule.allowLateSubmission && !isDeptUnlockedForRevision
+                      ? 'bg-rose-600'
+                      : 'bg-indigo-600'
+                  }`}>
+                    <Clock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-xs sm:text-sm flex items-center gap-2">
+                      <span>ปฏิทินรับคำของบประมาณ {fiscalYear}: {schedInfo.statusLabelTh}</span>
+                      {schedInfo.daysRemaining !== null && !schedInfo.isClosed && (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-mono text-[11px] font-bold border border-emerald-300">
+                          เหลือเวลา {schedInfo.daysRemaining} วัน
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] opacity-80 mt-0.5">
+                      กำหนดการ: {schedule.startDate} ถึง {schedule.endDate} 
+                      {schedule.announcement ? ` • ${schedule.announcement}` : ''}
+                    </p>
+                  </div>
+                </div>
+
+                {schedInfo.isClosed && !schedule.allowLateSubmission && !isDeptUnlockedForRevision && (
+                  <div className="px-3 py-1 bg-rose-200 text-rose-900 rounded-lg text-xs font-bold font-mono">
+                    ⛔ ปิดรับคำขอแล้ว
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Table Control Panel (รูปที่ 2) */}
           <TableControlPanel
             title="รายการวัสดุ"
@@ -699,51 +813,157 @@ export const StaffView: React.FC<StaffViewProps> = ({
           )}
 
           {/* Catalog Survey Table (รูปที่ 1) */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="bg-[#F0F4F8] border border-white/80 rounded-3xl p-5 shadow-[8px_8px_20px_rgba(163,177,198,0.3),-8px_-8px_20px_rgba(255,255,255,0.8)] space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
               <div>
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <h3 className="text-sm sm:text-base font-extrabold text-slate-900 flex items-center gap-2">
                   <Edit3 className="w-4 h-4 text-indigo-600" />
                   <span>แบบสำรวจรายการวัสดุ ({sortedItems.length} รายการ)</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  กรอกจำนวนความต้องการวัสดุประจำปีงบประมาณ {fiscalYear} แล้วกดส่งบันทึกคำขอ
+                  กรอกจำนวนความต้องการวัสดุประจำปีงบประมาณ {fiscalYear} หรือใช้ปุ่ม Quick Fill ด้านล่างเพื่อดึงยอดอัตโนมัติ
                 </p>
               </div>
 
-              {/* Inline Search Box */}
-              <div className="relative shrink-0 w-full sm:w-52">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchTerm}
-                  onChange={e => {
-                    setSearchTerm(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  placeholder="ค้นหารายการ..."
-                  className="w-full text-xs pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 font-medium placeholder-slate-400 shadow-2xs"
-                />
+              {/* Advanced Search & GPSC search */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative shrink-0 w-full sm:w-64">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={e => {
+                      setSearchTerm(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    placeholder="ค้นหาชื่อวัสดุ หรือรหัส GPSC..."
+                    className="w-full text-xs pl-8.5 pr-3 py-2 border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium placeholder-slate-400 shadow-[inset_1.5px_1.5px_3px_rgba(163,177,198,0.3)]"
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            {/* Quick Fill Toolbar & Stock Filters */}
+            <div className="bg-white/80 border border-slate-200/80 rounded-2xl p-3 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-3 shadow-xs">
+              {/* Quick Fill Preset Buttons */}
+              <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                <span className="font-extrabold text-indigo-900 flex items-center gap-1 text-[11px] mr-1">
+                  <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                  <span>กรอกด่วน (Quick Fill):</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('lastYear100')}
+                  disabled={isPlanFrozen}
+                  className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+                  title="ดึงยอดใช้จริงปี 2568 มาใส่ 100% ทุกรายการ"
+                >
+                  ⚡ ดึงยอดปี 68 (100%)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('lastYearPlus5')}
+                  disabled={isPlanFrozen}
+                  className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+                  title="ดึงยอดใช้จริงปี 2568 + 5%"
+                >
+                  ⚡ ปี 68 + 5%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('lastYearPlus10')}
+                  disabled={isPlanFrozen}
+                  className="px-2.5 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+                  title="ดึงยอดใช้จริงปี 2568 + 10%"
+                >
+                  ⚡ ปี 68 + 10%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('avg3Years')}
+                  disabled={isPlanFrozen}
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+                  title="ดึงยอดเฉลี่ย 3 ปีย้อนหลัง (2566-2568)"
+                >
+                  ⚡ เฉลี่ย 3 ปีย้อนหลัง
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickFill('clear')}
+                  disabled={isPlanFrozen}
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 font-semibold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+                >
+                  ล้างค่า
+                </button>
+              </div>
+
+              {/* Stock Status Filter Chips */}
+              <div className="flex items-center gap-1.5 flex-wrap text-xs">
+                <span className="font-bold text-slate-500 text-[11px] mr-1">สถานะคลัง:</span>
+                <button
+                  type="button"
+                  onClick={() => { setStockFilter('all'); setCurrentPage(1); }}
+                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    stockFilter === 'all'
+                      ? 'bg-slate-800 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  ทั้งหมด
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setStockFilter('low'); setCurrentPage(1); }}
+                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    stockFilter === 'low'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
+                  }`}
+                >
+                  ⚠️ คงคลังต่ำ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setStockFilter('adequate'); setCurrentPage(1); }}
+                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    stockFilter === 'adequate'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                  }`}
+                >
+                  ✓ คงคลังพอดี
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setStockFilter('excess'); setCurrentPage(1); }}
+                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    stockFilter === 'excess'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'
+                  }`}
+                >
+                  📦 สต็อกสูง
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto bg-white rounded-2xl border border-slate-200/80 shadow-xs">
               <table className="w-full text-base text-left">
-                <thead className="bg-slate-50 text-slate-600 uppercase font-mono text-sm border-b border-slate-200 select-none">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-mono text-sm border-b border-slate-200 select-none">
                   <tr>
                     <th 
                       onClick={() => handleHeaderSort('name')}
-                      className="p-2.5 w-1/3 cursor-pointer hover:bg-slate-100 transition-colors"
+                      className="p-3 cursor-pointer hover:bg-slate-100 transition-colors"
                     >
                       <div className="flex items-center gap-1">
-                        <span>รายการ</span>
+                        <span>รายการ / รหัส GPSC / สถานะคงคลัง</span>
                         <ArrowUpDown className="w-3 h-3 text-slate-400" />
                       </div>
                     </th>
-                    <th className="p-2.5">ประเภทวัสดุ</th>
+                    <th className="p-3">ประเภทวัสดุ</th>
                     <th 
                       onClick={() => handleHeaderSort('lastYear')}
-                      className="p-2.5 text-right cursor-pointer hover:bg-slate-100 transition-colors"
+                      className="p-3 text-right cursor-pointer hover:bg-slate-100 transition-colors"
                     >
                       <div className="flex items-center justify-end gap-1">
                         <span>ปี 2568</span>
@@ -752,7 +972,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     </th>
                     <th 
                       onClick={() => handleHeaderSort('requested')}
-                      className="p-2.5 text-right w-28 cursor-pointer hover:bg-slate-100 transition-colors"
+                      className="p-3 text-right w-44 cursor-pointer hover:bg-slate-100 transition-colors"
                     >
                       <div className="flex items-center justify-end gap-1">
                         <span>ขอปี {fiscalYear}</span>
@@ -761,7 +981,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     </th>
                     <th 
                       onClick={() => handleHeaderSort('diff')}
-                      className="p-2.5 text-right cursor-pointer hover:bg-slate-100 transition-colors"
+                      className="p-3 text-right cursor-pointer hover:bg-slate-100 transition-colors"
                     >
                       <div className="flex items-center justify-end gap-1">
                         <span>ผลต่าง</span>
@@ -775,10 +995,13 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     const hist = historyFor(name);
                     const last = hist[2568];
                     const unit = guessUnit(name);
+                    const gpsc = getItemGpscCode(name);
+                    const { stockQty, stockStatus } = getItemStockInfo(name);
 
                     const currentVal = qtyInputs[name];
                     let diffText = '—';
                     let diffClass = 'text-slate-400';
+                    const spike = calculateSpike(last, currentVal || 0);
 
                     if (currentVal !== undefined && currentVal > 0) {
                       const diff = currentVal - last;
@@ -796,26 +1019,64 @@ export const StaffView: React.FC<StaffViewProps> = ({
 
                     return (
                       <tr key={name} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-2.5 font-medium text-slate-800">{name}</td>
-                        <td className="p-2.5">
+                        <td className="p-3">
+                          <div className="font-semibold text-slate-900 text-xs sm:text-sm">{name}</div>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px]">
+                            <span className="font-mono text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded">
+                              GPSC: {gpsc}
+                            </span>
+                            {stockStatus === 'low' ? (
+                              <span className="text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.2 rounded font-bold">
+                                ⚠️ คงคลังต่ำ: {stockQty} {unit}
+                              </span>
+                            ) : stockStatus === 'excess' ? (
+                              <span className="text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded font-medium">
+                                📦 สต็อกสูง: {stockQty} {unit}
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded font-medium">
+                                ✓ คงคลัง: {stockQty} {unit}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3">
                           <CategoryBadge itemName={name} customItems={customItems} />
                         </td>
-                        <td className="p-2.5 text-right font-mono text-slate-600">
+                        <td className="p-3 text-right font-mono text-slate-600">
                           {last} {unit}
                         </td>
-                        <td className="p-2.5 text-right">
-                          <input
-                            type="number"
-                            min="0"
-                            disabled={isPlanFrozen}
-                            value={qtyInputs[name] ?? ''}
-                            onChange={e => handleQtyChange(name, e.target.value)}
-                            placeholder="0"
-                            className="w-20 px-2 py-1 border border-slate-200 rounded-lg text-right font-mono font-semibold focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 disabled:bg-slate-100"
-                          />
+                        <td className="p-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setQtyInputs(prev => ({ ...prev, [name]: last }))}
+                              disabled={isPlanFrozen}
+                              title={`ดึงยอดปี 2568 (${last} ${unit})`}
+                              className="px-1.5 py-1 text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-md transition-colors cursor-pointer disabled:opacity-40 whitespace-nowrap"
+                            >
+                              ⚡ ดึง {last}
+                            </button>
+                            <input
+                              type="number"
+                              min="0"
+                              disabled={isPlanFrozen}
+                              value={qtyInputs[name] ?? ''}
+                              onChange={e => handleQtyChange(name, e.target.value)}
+                              placeholder="0"
+                              className="w-20 px-2 py-1 border border-slate-200 rounded-lg text-right font-mono font-semibold focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 disabled:bg-slate-100 shadow-[inset_1px_1px_2px_rgba(163,177,198,0.2)]"
+                            />
+                          </div>
                         </td>
-                        <td className={`p-2.5 text-right font-mono ${diffClass}`}>
-                          {diffText}
+                        <td className="p-3 text-right font-mono">
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className={diffClass}>{diffText}</span>
+                            {currentVal !== undefined && currentVal > 0 && spike.isSpike && (
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold border ${spike.badgeColor} whitespace-nowrap`}>
+                                {spike.labelTh}
+                              </span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1072,6 +1333,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
                             <ArrowUpDown className="w-3 h-3 text-rose-600" />
                           </div>
                         </th>
+                        <th className="p-3 text-center">ประวัติ</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-rose-100/80">
@@ -1174,6 +1436,19 @@ export const StaffView: React.FC<StaffViewProps> = ({
                             {/* เหตุผลการตีกลับ */}
                             <td className="p-3 text-rose-900 italic bg-rose-50/60 rounded-xl border border-rose-100/80 leading-relaxed text-[11.5px]">
                               "{r.comment || 'ขอให้ทบทวนและปรับปรุงจำนวนใหม่อีกครั้ง'}"
+                            </td>
+
+                            {/* ปุ่มดูประวัติ */}
+                            <td className="p-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedAuditItem(r)}
+                                className="px-2.5 py-1.5 text-xs font-bold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl inline-flex items-center gap-1 transition-all cursor-pointer shadow-2xs active:scale-95"
+                                title="ดูประวัติการอนุมัติและการแก้ไข"
+                              >
+                                <History className="w-3.5 h-3.5 text-rose-600" />
+                                <span>ประวัติ</span>
+                              </button>
                             </td>
                           </tr>
                         );
@@ -1397,6 +1672,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
                             <ArrowUpDown className="w-3 h-3 text-slate-400" />
                           </div>
                         </th>
+                        <th className="p-3 text-center">ประวัติ & ความเห็น</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1462,6 +1738,18 @@ export const StaffView: React.FC<StaffViewProps> = ({
                                 <span className="w-1.5 h-1.5 rounded-full bg-current" />
                                 {statusInfo.text}
                               </span>
+                            </td>
+
+                            <td className="p-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedAuditItem(r)}
+                                className="px-2.5 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-xl inline-flex items-center gap-1 transition-all cursor-pointer shadow-2xs active:scale-95"
+                                title="ดูประวัติการอนุมัติและการแก้ไข"
+                              >
+                                <History className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>ประวัติ</span>
+                              </button>
                             </td>
                           </tr>
                         );
@@ -1969,6 +2257,13 @@ export const StaffView: React.FC<StaffViewProps> = ({
           );
         })}
       </div>
+      {/* Audit Trail Modal */}
+      {selectedAuditItem && (
+        <AuditTrailModal
+          item={selectedAuditItem}
+          onClose={() => setSelectedAuditItem(null)}
+        />
+      )}
     </div>
   );
 };

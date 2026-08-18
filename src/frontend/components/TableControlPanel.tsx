@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { CategoryId } from '../types';
-import { CATEGORY_LABELS, CATEGORY_ORDER } from '../data/catalog';
+import { CATEGORY_LABELS, CATEGORY_ORDER, getCategoryOrder, getCategoryLabel } from '../data/catalog';
 import { Search, Sparkles, Calendar } from 'lucide-react';
 
 export type SortOption = 
@@ -124,6 +124,13 @@ export const TableControlPanel: React.FC<TableControlPanelProps> = ({
   searchPlaceholder,
   actions
 }) => {
+  const [, setCatVersion] = useState(0);
+  useEffect(() => {
+    const handleUpdate = () => setCatVersion(v => v + 1);
+    window.addEventListener('categories_updated', handleUpdate);
+    return () => window.removeEventListener('categories_updated', handleUpdate);
+  }, []);
+
   const hasBottomRow = (showDeptFilter && departments && onDeptChange) || (showSearch && onSearchChange);
 
   return (
@@ -211,7 +218,7 @@ export const TableControlPanel: React.FC<TableControlPanelProps> = ({
               ทั้งหมดทุกหมวด
             </button>
 
-            {CATEGORY_ORDER.map(c => {
+            {getCategoryOrder().map(c => {
               const style = CATEGORY_BUTTON_STYLES[c] || CATEGORY_BUTTON_STYLES.office;
               const isSelected = selectedCategory === c;
               return (
@@ -224,7 +231,7 @@ export const TableControlPanel: React.FC<TableControlPanelProps> = ({
                   }`}
                 >
                   <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-white' : style.dot}`} />
-                  {CATEGORY_LABELS[c]}
+                  {getCategoryLabel(c)}
                 </button>
               );
             })}

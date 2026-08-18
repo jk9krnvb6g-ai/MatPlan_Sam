@@ -5,6 +5,7 @@ import { ALL_ITEMS, CATALOG, CATEGORY_LABELS, CATEGORY_ORDER, DEPARTMENTS, deptB
 import { CompareGrid } from './CompareGrid';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
+import { AuditTrailModal } from './AuditTrailModal';
 import { sortItems } from '../utils/sortHelper';
 import * as XLSX from 'xlsx';
 import { 
@@ -34,7 +35,8 @@ import {
   TrendingDown,
   TrendingUp,
   Minus,
-  ShieldCheck
+  ShieldCheck,
+  History
 } from 'lucide-react';
 
 interface HeadViewProps {
@@ -69,6 +71,7 @@ export const HeadView: React.FC<HeadViewProps> = ({
   const [sortField, setSortField] = useState<'itemName' | 'requester' | 'lastYear' | 'requested' | 'increase'>('itemName');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [activeTab, setActiveTab] = useState<'pending' | 'rejected' | 'submitted' | 'recent' | 'compare'>('pending');
+  const [selectedAuditItem, setSelectedAuditItem] = useState<RequestItem | null>(null);
 
   // Additional states for rejected & submitted tabs
   const [rejectedCurrentPage, setRejectedCurrentPage] = useState(1);
@@ -952,6 +955,15 @@ export const HeadView: React.FC<HeadViewProps> = ({
                             <div className="flex items-center justify-end gap-1.5 whitespace-nowrap flex-nowrap shrink-0">
                               <button
                                 type="button"
+                                onClick={() => setSelectedAuditItem(r)}
+                                className="px-2.5 py-1.5 border border-slate-200 bg-white hover:bg-indigo-50 text-indigo-700 font-bold rounded-xl transition-all shadow-2xs flex items-center justify-center gap-1 text-[11.5px] cursor-pointer hover:scale-105 active:scale-95 whitespace-nowrap shrink-0"
+                                title="ดูประวัติการอนุมัติและคำชี้แจง"
+                              >
+                                <History className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                <span className="whitespace-nowrap">ประวัติ</span>
+                              </button>
+                              <button
+                                type="button"
                                 disabled={isPlanFrozen}
                                 onClick={() => handleRejectSingle(r)}
                                 className="px-3 py-1.5 border border-rose-200/90 bg-rose-50/80 hover:bg-rose-100 text-rose-700 font-bold rounded-xl transition-all shadow-2xs hover:shadow-xs flex items-center justify-center gap-1.5 text-[11.5px] cursor-pointer hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100 group whitespace-nowrap shrink-0"
@@ -1577,6 +1589,14 @@ export const HeadView: React.FC<HeadViewProps> = ({
             );
           })()}
         </div>
+      )}
+
+      {/* Audit Trail Modal */}
+      {selectedAuditItem && (
+        <AuditTrailModal
+          item={selectedAuditItem}
+          onClose={() => setSelectedAuditItem(null)}
+        />
       )}
     </div>
   );

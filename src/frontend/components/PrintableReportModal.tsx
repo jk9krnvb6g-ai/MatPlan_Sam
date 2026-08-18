@@ -94,24 +94,24 @@ export const PrintableReportModal: React.FC<PrintableReportModalProps> = ({
         {/* PRINTABLE DOCUMENT AREA */}
         <div className="space-y-6 font-serif print:p-0">
           {/* Header */}
-          <div className="text-center space-y-1">
-            <div className="text-xs font-sans text-slate-500 font-mono">
-              เอกสารสรุปแผนงานจัดหาวัสดุ ประจำปีงบประมาณ 2569
+          <div className="text-center space-y-1.5 pb-2 border-b border-slate-200">
+            <div className="text-xs font-sans text-indigo-700 font-bold tracking-wide">
+              โรงพยาบาลสามชุก สำนักงานสาธารณสุขจังหวัดสุพรรณบุรี
             </div>
-            <h1 className="text-lg font-bold text-slate-900">
-              รายงานสรุปความต้องการจัดหาวัสดุและครุภัณฑ์ ประจำปีงบประมาณ พ.ศ. 2569
+            <h1 className="text-lg sm:text-xl font-bold text-slate-900 font-sans">
+              แบบฟอร์มเสนอแผนความต้องการจัดหาวัสดุ ประจำปีงบประมาณ พ.ศ. {fiscalYear}
             </h1>
             <p className="text-xs text-slate-600 font-sans">
-              ข้อมูลผ่านการอนุมัติตามขั้นตอนจากหัวหน้ากลุ่มงาน/ฝ่าย ฝ่ายพัสดุ และผู้อำนวยการเรียบร้อยแล้ว
+              เอกสารประกอบการจัดสรรงบประมาณและการจัดซื้อจัดจ้างตามระเบียบกระทรวงการคลัง
             </p>
           </div>
 
           {/* Details Bar */}
-          <div className="grid grid-cols-2 gap-4 text-xs font-sans p-3 bg-slate-50 border border-slate-200 rounded-xl">
-            <div><strong>หน่วยงานรับผิดชอบ:</strong> ฝ่ายพัสดุและบริหารทรัพย์สิน</div>
-            <div><strong>ปีงบประมาณ:</strong> พ.ศ. 2569</div>
-            <div><strong>จำนวนรายการอนุมัติ:</strong> {approvedRequests.length} รายการ</div>
-            <div><strong>วงเงินงบประมาณรวมทั้งสิ้น:</strong> <span className="font-mono font-bold text-teal-900">{fmtBaht(totalApprovedBudget)} บาท</span></div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs font-sans p-3.5 bg-slate-50 border border-slate-200 rounded-2xl shadow-inner">
+            <div><strong className="text-slate-500 block text-[10px] uppercase">หน่วยงานรับผิดชอบ</strong> ฝ่ายพัสดุและบริหารทรัพย์สิน</div>
+            <div><strong className="text-slate-500 block text-[10px] uppercase">ปีงบประมาณ</strong> พ.ศ. {fiscalYear}</div>
+            <div><strong className="text-slate-500 block text-[10px] uppercase">จำนวนรายการอนุมัติ</strong> {approvedRequests.length} รายการ</div>
+            <div><strong className="text-slate-500 block text-[10px] uppercase">วงเงินงบประมาณรวม</strong> <span className="font-mono font-bold text-indigo-900">{fmtBaht(totalApprovedBudget)} บาท</span></div>
           </div>
 
           {/* Table */}
@@ -193,23 +193,95 @@ export const PrintableReportModal: React.FC<PrintableReportModalProps> = ({
             </table>
           </div>
 
-          {/* Signature Block */}
-          <div className="grid grid-cols-3 gap-6 pt-12 text-center text-xs font-sans">
-            <div className="space-y-8">
-              <div>ลงชื่อ......................................................</div>
-              <div>(เจ้าหน้าที่พัสดุผู้รวบรวม)</div>
-              <div>ตำแหน่ง..................................................</div>
+          {/* Official 4-Block Government Signature Layout */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-10 text-xs font-sans border-t border-slate-300">
+            
+            {/* Block 1: ผู้เสนอขอรับการจัดสรร (เจ้าหน้าที่ผู้ขอ) */}
+            <div className="border border-slate-300 rounded-2xl p-4 bg-slate-50/70 text-center flex flex-col justify-between space-y-4">
+              <div className="font-bold text-slate-800 border-b border-slate-200 pb-2">
+                1. ผู้เสนอขอรับการจัดสรร
+              </div>
+              <div className="space-y-4 py-2">
+                <div className="h-8 border-b border-dashed border-slate-400 w-3/4 mx-auto" />
+                <div>ลงชื่อ......................................................</div>
+                <div>(......................................................)</div>
+                <div>ตำแหน่ง เจ้าหน้าที่ผู้รับผิดชอบ</div>
+                <div>วันที่ ......./......./............</div>
+              </div>
             </div>
-            <div className="space-y-8">
-              <div>ลงชื่อ......................................................</div>
-              <div>(หัวหน้าฝ่ายพัสดุ)</div>
-              <div>ตำแหน่ง..................................................</div>
+
+            {/* Block 2: หัวหน้ากลุ่มงาน / หัวหน้าฝ่าย */}
+            <div className="border border-slate-300 rounded-2xl p-4 bg-slate-50/70 text-center flex flex-col justify-between space-y-4">
+              <div className="font-bold text-slate-800 border-b border-slate-200 pb-2">
+                2. หัวหน้าฝ่าย / กลุ่มงาน
+              </div>
+              <div className="text-[11px] text-slate-700 flex justify-center gap-3">
+                <label className="flex items-center gap-1">
+                  <span className="w-3.5 h-3.5 border border-slate-400 inline-block rounded-xs"></span>
+                  <span>เห็นชอบ</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <span className="w-3.5 h-3.5 border border-slate-400 inline-block rounded-xs"></span>
+                  <span>ปรับลด</span>
+                </label>
+              </div>
+              <div className="space-y-4 py-2">
+                <div className="h-8 border-b border-dashed border-slate-400 w-3/4 mx-auto" />
+                <div>ลงชื่อ......................................................</div>
+                <div>(......................................................)</div>
+                <div>ตำแหน่ง หัวหน้าฝ่าย/กลุ่มงาน</div>
+                <div>วันที่ ......./......./............</div>
+              </div>
             </div>
-            <div className="space-y-8">
-              <div>ลงชื่อ......................................................</div>
-              <div>(ผู้อำนวยการ / ผู้มีอำนาจอนุมัติ)</div>
-              <div>ตำแหน่ง..................................................</div>
+
+            {/* Block 3: หัวหน้าฝ่ายพัสดุและบริหารทรัพย์สิน */}
+            <div className="border border-slate-300 rounded-2xl p-4 bg-slate-50/70 text-center flex flex-col justify-between space-y-4">
+              <div className="font-bold text-slate-800 border-b border-slate-200 pb-2">
+                3. หัวหน้าฝ่ายพัสดุฯ
+              </div>
+              <div className="text-[11px] text-slate-700 flex justify-center gap-3">
+                <label className="flex items-center gap-1">
+                  <span className="w-3.5 h-3.5 border border-slate-400 inline-block rounded-xs"></span>
+                  <span>ตรวจสอบแล้ว</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <span className="w-3.5 h-3.5 border border-slate-400 inline-block rounded-xs"></span>
+                  <span>มีงบประมาณ</span>
+                </label>
+              </div>
+              <div className="space-y-4 py-2">
+                <div className="h-8 border-b border-dashed border-slate-400 w-3/4 mx-auto" />
+                <div>ลงชื่อ......................................................</div>
+                <div>(......................................................)</div>
+                <div>ตำแหน่ง หัวหน้าฝ่ายพัสดุและบริหารทรัพย์สิน</div>
+                <div>วันที่ ......./......./............</div>
+              </div>
             </div>
+
+            {/* Block 4: ผู้อำนวยการโรงพยาบาลสามชุก */}
+            <div className="border border-slate-300 rounded-2xl p-4 bg-slate-50/70 text-center flex flex-col justify-between space-y-4">
+              <div className="font-bold text-slate-800 border-b border-slate-200 pb-2">
+                4. ผู้อนุมัติ (ผอ.รพ.สามชุก)
+              </div>
+              <div className="text-[11px] text-slate-700 flex justify-center gap-3">
+                <label className="flex items-center gap-1">
+                  <span className="w-3.5 h-3.5 border border-slate-400 inline-block rounded-xs"></span>
+                  <span>อนุมัติ</span>
+                </label>
+                <label className="flex items-center gap-1">
+                  <span className="w-3.5 h-3.5 border border-slate-400 inline-block rounded-xs"></span>
+                  <span>ไม่อนุมัติ</span>
+                </label>
+              </div>
+              <div className="space-y-4 py-2">
+                <div className="h-8 border-b border-dashed border-slate-400 w-3/4 mx-auto" />
+                <div>ลงชื่อ......................................................</div>
+                <div>(......................................................)</div>
+                <div>ผู้อำนวยการโรงพยาบาลสามชุก</div>
+                <div>วันที่ ......./......./............</div>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>

@@ -118,7 +118,7 @@ export const ALL_ITEMS: string[] = new Proxy(rawAllItems, {
   }
 }) as unknown as string[];
 
-const defaultCategoryLabels: Record<string, string> = {
+export const defaultCategoryLabels: Record<string, string> = {
   office: 'วัสดุสำนักงานทั่วไป',
   samnak: 'วัสดุสำนักงาน (สำนัก)',
   kitchen: 'วัสดุงานบ้านงานครัว',
@@ -126,36 +126,98 @@ const defaultCategoryLabels: Record<string, string> = {
   computer: 'วัสดุคอมพิวเตอร์ / หมึกพิมพ์'
 };
 
-const defaultCategoryOrder: string[] = ['office', 'samnak', 'kitchen', 'electric', 'computer'];
+export const defaultCategoryOrder: string[] = ['office', 'samnak', 'kitchen', 'electric', 'computer'];
+
+let memoryCustomCategories: Record<string, string> = {};
+let memoryCustomUnits: Record<string, string> = {};
 
 export function getCustomCategories(): Record<string, string> {
-  if (typeof window === 'undefined') return {};
+  if (typeof window === 'undefined') return memoryCustomCategories;
   try {
     const saved = localStorage.getItem('survey_custom_categories');
-    return saved ? JSON.parse(saved) : {};
-  } catch {
-    return {};
-  }
+    if (saved) {
+      memoryCustomCategories = JSON.parse(saved);
+    }
+  } catch {}
+  return memoryCustomCategories;
 }
 
 export function saveCustomCategory(key: string, label: string) {
-  if (typeof window === 'undefined') return;
-  const current = getCustomCategories();
-  current[key] = label;
-  localStorage.setItem('survey_custom_categories', JSON.stringify(current));
-  window.dispatchEvent(new Event('categories_updated'));
+  const current = { ...getCustomCategories(), [key]: label };
+  memoryCustomCategories = current;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('survey_custom_categories', JSON.stringify(current));
+    } catch {}
+    window.dispatchEvent(new Event('categories_updated'));
+  }
 }
 
 export function deleteCustomCategory(key: string) {
-  if (typeof window === 'undefined') return;
-  const current = getCustomCategories();
+  const current = { ...getCustomCategories() };
   delete current[key];
-  localStorage.setItem('survey_custom_categories', JSON.stringify(current));
-  window.dispatchEvent(new Event('categories_updated'));
+  memoryCustomCategories = current;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('survey_custom_categories', JSON.stringify(current));
+    } catch {}
+    window.dispatchEvent(new Event('categories_updated'));
+  }
+}
+
+export function setAllCustomCategories(cats: Record<string, string>) {
+  memoryCustomCategories = { ...(cats || {}) };
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('survey_custom_categories', JSON.stringify(memoryCustomCategories));
+    } catch {}
+    window.dispatchEvent(new Event('categories_updated'));
+  }
+}
+
+export function getCustomUnits(): Record<string, string> {
+  if (typeof window === 'undefined') return memoryCustomUnits;
+  try {
+    const saved = localStorage.getItem('survey_custom_units');
+    if (saved) {
+      memoryCustomUnits = JSON.parse(saved);
+    }
+  } catch {}
+  return memoryCustomUnits;
+}
+
+export function saveCustomUnit(name: string, unit: string) {
+  const current = { ...getCustomUnits(), [name]: unit };
+  memoryCustomUnits = current;
+  CUSTOM_UNITS[name] = unit;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('survey_custom_units', JSON.stringify(current));
+    } catch {}
+  }
+}
+
+export function setAllCustomUnits(units: Record<string, string>) {
+  memoryCustomUnits = { ...(units || {}) };
+  Object.assign(CUSTOM_UNITS, memoryCustomUnits);
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('survey_custom_units', JSON.stringify(memoryCustomUnits));
+    } catch {}
+  }
 }
 
 export function getCategoryLabel(catId: string): string {
-  return CATEGORY_LABELS[catId] || catId;
+  if (isCleared()) return '';
+  const custom = getCustomCategories();
+  if (custom[catId]) return custom[catId];
+  return defaultCategoryLabels[catId] || catId;
+}
+
+export function getCategoryOrder(): string[] {
+  if (isCleared()) return [];
+  const custom = Object.keys(getCustomCategories());
+  return Array.from(new Set([...defaultCategoryOrder, ...custom]));
 }
 
 export const CATEGORY_LABELS: Record<string, string> = new Proxy(defaultCategoryLabels, {
@@ -179,24 +241,44 @@ export const CATEGORY_LABELS: Record<string, string> = new Proxy(defaultCategory
 
 export const CATEGORY_ORDER: string[] = new Proxy(defaultCategoryOrder, {
   get(target, prop) {
-    if (isCleared()) {
-      const empty: string[] = [];
-      const val = Reflect.get(empty, prop);
-      return typeof val === 'function' ? val.bind(empty) : val;
+    const list = getCategoryOrder();
+    if (prop === Symbol.iterator) {
+      return list[Symbol.iterator].bind(list);
     }
-    const customKeys = Object.keys(getCustomCategories());
-    const combined = Array.from(new Set([...target, ...customKeys]));
-    const val = Reflect.get(combined, prop);
-    return typeof val === 'function' ? val.bind(combined) : val;
+    if (prop === 'length') {
+      return list.length;
+    }
+    if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+      return list[Number(prop)];
+    }
+    if (typeof prop === 'string' && typeof (list as any)[prop] === 'function') {
+      return (list as any)[prop].bind(list);
+    }
+    return (list as any)[prop];
   },
-  ownKeys(target) {
-    if (isCleared()) return [];
-    const customKeys = Object.keys(getCustomCategories());
-    return Array.from(new Set([...target, ...customKeys]));
+  has(target, prop) {
+    const list = getCategoryOrder();
+    if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+      return Number(prop) < list.length;
+    }
+    return prop in list || list.includes(prop as any);
+  },
+  ownKeys() {
+    const list = getCategoryOrder();
+    return [...list.map((_, i) => String(i)), 'length'];
   },
   getOwnPropertyDescriptor(target, prop) {
-    if (isCleared()) return undefined;
-    return { enumerable: true, configurable: true };
+    const list = getCategoryOrder();
+    if (typeof prop === 'string' && /^\d+$/.test(prop)) {
+      const idx = Number(prop);
+      if (idx < list.length) {
+        return { value: list[idx], writable: false, enumerable: true, configurable: true };
+      }
+    }
+    if (prop === 'length') {
+      return { value: list.length, writable: false, enumerable: false, configurable: false };
+    }
+    return undefined;
   }
 }) as unknown as string[];
 
@@ -280,9 +362,15 @@ export function deptName(id: string): string {
 }
 
 export function getItemCategory(itemName: string, customItems?: Record<string, string[]>): CategoryId {
-  for (const cat of CATEGORY_ORDER) {
-    if (CATALOG[cat].includes(itemName)) return cat;
+  const catOrder = getCategoryOrder();
+  for (const cat of catOrder) {
+    if (CATALOG[cat]?.includes(itemName)) return cat;
     if (customItems && customItems[cat]?.includes(itemName)) return cat;
+  }
+  if (customItems) {
+    for (const [cat, list] of Object.entries(customItems)) {
+      if (Array.isArray(list) && list.includes(itemName)) return cat;
+    }
   }
   return 'office';
 }
@@ -298,6 +386,9 @@ export function hashStr(s: string): number {
 export const CUSTOM_UNITS: Record<string, string> = {};
 
 export function guessUnit(name: string): string {
+  if (!name) return 'ชิ้น';
+  const custom = getCustomUnits();
+  if (custom && custom[name]) return custom[name];
   if (CUSTOM_UNITS[name]) return CUSTOM_UNITS[name];
   if (/ม้วน|เทป|แลคซีน/.test(name)) return 'ม้วน';
   if (/กระดาษชำระ/.test(name)) return 'ม้วน';
@@ -501,6 +592,25 @@ export function generate10000Requests(): RequestItem[] {
 }
 
 export const generate5000Requests = generate10000Requests;
+
+export function getItemGpscCode(itemName: string): string {
+  const h = Math.abs(hashStr(itemName));
+  const prefix = 4400 + (h % 50);
+  const suffix = 1000 + ((h * 13) % 8999);
+  return `${prefix}-${suffix}`;
+}
+
+export function getItemStockInfo(itemName: string): { stockQty: number; stockStatus: 'low' | 'adequate' | 'excess' } {
+  const h = Math.abs(hashStr(itemName + '|stock'));
+  const stockQty = (h % 65);
+  let stockStatus: 'low' | 'adequate' | 'excess' = 'adequate';
+  if (stockQty <= 8) {
+    stockStatus = 'low';
+  } else if (stockQty > 40) {
+    stockStatus = 'excess';
+  }
+  return { stockQty, stockStatus };
+}
 
 export function getItemPriceForYear(name: string, unit: string, year: number): number {
   const basePrice = guessPrice(name, unit);

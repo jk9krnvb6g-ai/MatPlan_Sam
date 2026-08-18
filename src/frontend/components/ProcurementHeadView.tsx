@@ -6,9 +6,10 @@ import { ALL_ITEMS, CATALOG, CATEGORY_LABELS, CATEGORY_ORDER, deptName, fmtBaht,
 import { CompareGrid } from './CompareGrid';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
+import { AuditTrailModal } from './AuditTrailModal';
 import { sortItems } from '../utils/sortHelper';
 import { exportProcurementPlanExcel } from '../utils/excelHelper';
-import { Info, ShieldCheck, AlertTriangle, CheckCheck, BarChart3, Inbox, X, Check, ArrowUpDown, RotateCcw, Search, Send, XCircle, TrendingUp, AlertCircle, CheckCircle2, Calendar, Download, Crown, Clock, Filter, UserCheck, PackageCheck, FileText, FileEdit, Unlock, Lock, Sparkles, PlusCircle } from 'lucide-react';
+import { Info, ShieldCheck, AlertTriangle, CheckCheck, BarChart3, Inbox, X, Check, ArrowUpDown, RotateCcw, Search, Send, XCircle, TrendingUp, AlertCircle, CheckCircle2, Calendar, Download, Crown, Clock, Filter, UserCheck, PackageCheck, FileText, FileEdit, Unlock, Lock, Sparkles, PlusCircle, History } from 'lucide-react';
 
 interface ProcurementHeadViewProps {
   currentUser: User;
@@ -50,6 +51,7 @@ export const ProcurementHeadView: React.FC<ProcurementHeadViewProps> = ({
   const [activeTab, setActiveTab] = useState<'pending' | 'compare' | 'price-history' | 'approved-summary' | 'rejected' | 'revisions'>('pending');
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedAuditItem, setSelectedAuditItem] = useState<RequestItem | null>(null);
   const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<'itemName' | 'totalQty' | 'price' | 'lineBudget'>('itemName');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -1793,6 +1795,14 @@ export const ProcurementHeadView: React.FC<ProcurementHeadViewProps> = ({
           </tbody>
         </table>
       </div>
+
+      {/* Audit Trail Modal */}
+      {selectedAuditItem && (
+        <AuditTrailModal
+          item={selectedAuditItem}
+          onClose={() => setSelectedAuditItem(null)}
+        />
+      )}
     </div>
   );
 };

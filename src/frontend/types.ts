@@ -43,6 +43,9 @@ export interface MaterialItem {
   price: number;
   active: boolean;
   isCustom?: boolean;
+  gpscCode?: string;
+  stockQty?: number;
+  stockStatus?: 'low' | 'adequate' | 'excess';
 }
 
 export interface DepartmentRevisionPermission {
@@ -52,6 +55,21 @@ export interface DepartmentRevisionPermission {
   unlockedBy?: string;
   expiresAt?: string;
   note?: string;
+}
+
+export interface RequestAuditLog {
+  id: string;
+  timestamp: string;
+  role: UserRole;
+  actorName: string;
+  action: 'submit' | 'approve' | 'reject' | 'adjust_qty' | 'update_price' | 'remark' | 'revision';
+  actionLabelTh: string;
+  oldQty?: number;
+  newQty?: number;
+  oldStatus?: RequestStatus;
+  newStatus?: RequestStatus;
+  comment?: string;
+  reason?: string;
 }
 
 export interface RequestItem {
@@ -69,6 +87,11 @@ export interface RequestItem {
   createdAt?: string;
   updatedAt?: string;
 
+  // Material item metadata
+  gpscCode?: string;
+  stockQty?: number;
+  stockStatus?: 'low' | 'adequate' | 'excess';
+
   // Requester identity
   requesterName?: string;
   requesterSubDept?: string;
@@ -85,6 +108,9 @@ export interface RequestItem {
   rejectedByName?: string;
   rejectedAt?: string;
 
+  // Audit trail & detailed remarks history
+  auditLogs?: RequestAuditLog[];
+
   // Mid-Year Revision Plan tracking
   isRevisionItem?: boolean;          // True if this is an adjustment or newly added revision item
   revisionType?: 'add' | 'modify' | 'cancel' | 'none'; // Item revision action
@@ -99,6 +125,14 @@ export interface HistoryData {
   2566: number;
   2567: number;
   2568: number;
+}
+
+export interface SubmissionSchedule {
+  startDate: string;        // e.g. "2026-01-01"
+  endDate: string;          // e.g. "2026-03-31"
+  isOpen: boolean;          // Manual master switch
+  allowLateSubmission: boolean;
+  announcement?: string;
 }
 
 export interface LogEntry {

@@ -19,6 +19,7 @@ import {
 import { CompareGrid } from './CompareGrid';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption, CATEGORY_BUTTON_STYLES } from './TableControlPanel';
+import { AuditTrailModal } from './AuditTrailModal';
 import { sortItems } from '../utils/sortHelper';
 import { exportProcurementPlanExcel } from '../utils/excelHelper';
 import { 
@@ -52,7 +53,8 @@ import {
   UserCheck,
   Crown,
   ShieldCheck,
-  Unlock
+  Unlock,
+  History
 } from 'lucide-react';
 
 interface ExecutiveViewProps {
@@ -89,6 +91,7 @@ export const ExecutiveView: React.FC<ExecutiveViewProps> = ({
   onToastAlert
 }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'pending' | 'approved' | 'compare' | 'approved-summary' | 'rejected' | 'revision-review'>('dashboard');
+  const [selectedAuditItem, setSelectedAuditItem] = useState<RequestItem | null>(null);
   const [comments, setComments] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<'itemName' | 'deptId' | 'qtyRequested' | 'price' | 'lineBudget'>('itemName');
@@ -2633,6 +2636,14 @@ export const ExecutiveView: React.FC<ExecutiveViewProps> = ({
           </tbody>
         </table>
       </div>
+
+      {/* Audit Trail Modal */}
+      {selectedAuditItem && (
+        <AuditTrailModal
+          item={selectedAuditItem}
+          onClose={() => setSelectedAuditItem(null)}
+        />
+      )}
     </div>
   );
 };

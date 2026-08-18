@@ -396,3 +396,112 @@ export async function parseMaterialExcel(file: File): Promise<{
     reader.readAsArrayBuffer(file);
   });
 }
+
+/**
+ * 4. Export Complete System State as Multi-sheet Excel Backup
+ */
+export function exportFullSystemExcelBackup(
+  requests: RequestItem[],
+  users: any[],
+  departments: Department[],
+  workGroups: WorkGroup[],
+  itemPrices: Record<string, number>,
+  fiscalYear: string
+) {
+  const wb = XLSX.utils.book_new();
+  const deptMap = new Map<string, Department>(departments.map(d => [d.id, d]));
+  const wgMap = new Map<string, WorkGroup>(workGroups.map(w => [w.id, w]));
+
+  // Sheet 1: Work Groups Summary
+  const wgRows = workGroups.map((wg, idx) => {
+    const deptsInGroup = departments.filter(d => d.workGroupId === wg.id);
+    const deptIds = new Set(deptsInGroup.map(d => d.id));
+    const reqsInGroup = requests.filter(r => deptIds.has(r.deptId));
+    const approvedInGroup = reqsInGroup.filter(r => r.status === 'approved');
+    const totalReq = reqsInGroup.reduce((sum, r) => sum + (r.qtyRequested * calcUnitPrice(r, itemPrices)), 0);
+    const totalApp = approvedInGroup.reduce((sum, r) => sum + (r.qtyRequested * calcUnitPrice(r, itemPrices)), 0);
+
+    return {
+      'ลำดับ': idx + 1,
+      'รหัสกลุ่มงาน': wg.code || wg.id,
+      'ชื่อกลุ่มงาน': wg.name,
+      'จำนวนฝ่าย': deptsInGroup.length,
+      'จำนวนคำขอ': reqsInGroup.length,
+      'จำนวนอนุมัติ': approvedInGroup.length,
+      'งบประมาณเสนอขอ (บาท)': totalReq,
+      'งบประมาณอนุมัติ (บาท)': totalApp
+    };
+  });
+  const wsWg = XLSX.utils.json_to_sheet(wgRows);
+  XLSX.utils.book_append_sheet(wb, wsWg, '1_สรุปกลุ่มงาน');
+
+  // Sheet 2: Department Summary
+  const deptRows = departments.map((d, idx) => {
+    const wg = d.workGroupId ? wgMap.get(d.workGroupId) : null;
+    const reqsInDept = requests.filter(r => r.deptId === d.id);
+    const approvedInDept = reqsInDept.filter(r => r.status === 'approved');
+    const totalReq = reqsInDept.reduce((sum, r) => sum + (r.qtyRequested * calcUnitPrice(r, itemPrices)), 0);
+    const totalApp = approvedInDept.reduce((sum, r) => sum + (r.qtyRequested * calcUnitPrice(r, itemPrices)), 0);
+
+    return {
+      'ลำดับ': idx + 1,
+      'รหัสฝ่าย': d.id,
+      'ชื่อฝ่าย/แผนก': d.name,
+      'สังกัดกลุ่มงาน': wg ? wg.name : '-',
+      'หมวดหมู่หลัก': CATEGORY_LABELS[d.category] || d.category,
+      'จำนวนรายการที่ขอ': reqsInDept.length,
+      'จำนวนรายการอนุมัติ': approvedInDept.length,
+      'งบประมาณเสนอขอ (บาท)': totalReq,
+      'งบประมาณอนุมัติ (บาท)': totalApp
+    };
+  });
+  const wsDept = XLSX.utils.json_to_sheet(deptRows);
+  XLSX.utils.book_append_sheet(wb, wsDept, '2_สรุปรายฝ่าย');
+
+  // Sheet 3: All Requests Details
+  const reqRows = requests.map((r, idx) => {
+    const d = deptMap.get(r.deptId);
+    const unitPrice = calcUnitPrice(r, itemPrices);
+    const lineTotalReq = r.qtyRequested * unitPrice;
+    const lineTotalApp = r.status === 'approved' ? r.qtyRequested * unitPrice : 0;
+
+    return {
+      'ลำดับ': idx + 1,
+      'รหัสคำขอ': r.id,
+      'ชื่อหน่วยงาน/ฝ่าย': d ? d.name : r.deptId,
+      'ชื่อรายการวัสดุ/ครุภัณฑ์': r.itemName,
+      'หน่วยนับ': r.unit,
+      'ยอดใช้ปีก่อน': r.qtyLastYear,
+      'จำนวนที่เสนอขอ': r.qtyRequested,
+      'ราคากลางต่อหน่วย (บาท)': unitPrice,
+      'วงเงินเสนอขอรวม (บาท)': lineTotalReq,
+      'สถานะการพิจารณา': getStatusThai(r.status),
+      'วงเงินอนุมัติ (บาท)': lineTotalApp,
+      'ผู้เสนอขอ': r.requesterName || '-',
+      'เหตุผลความจำเป็น': r.reason || '-',
+      'ข้อคิดเห็น/หมายเหตุ': r.comment || '-'
+    };
+  });
+  const wsReq = XLSX.utils.json_to_sheet(reqRows);
+  XLSX.utils.book_append_sheet(wb, wsReq, '3_รายการคำขอทั้งหมด');
+
+  // Sheet 4: Users Accounts
+  const userRows = users.map((u, idx) => {
+    const d = deptMap.get(u.deptId);
+    return {
+      'ลำดับ': idx + 1,
+      'Username': u.username,
+      'ชื่อ-นามสกุล': u.name,
+      'ตำแหน่ง/บทบาท': u.role,
+      'สิทธิ์การใช้งาน': Array.isArray(u.roles) ? u.roles.join(', ') : u.role,
+      'หน่วยงาน/ฝ่าย': d ? d.name : u.deptId,
+      'สถานะบัญชี': u.status === 'approved' || u.status === 'active' ? 'อนุมัติแล้ว (Active)' : (u.status === 'pending' ? 'รออนุมัติ' : 'ระงับการใช้งาน')
+    };
+  });
+  const wsUsers = XLSX.utils.json_to_sheet(userRows);
+  XLSX.utils.book_append_sheet(wb, wsUsers, '4_บัญชีผู้ใช้งาน');
+
+  const fileName = `MatPlan_System_Full_Backup_Excel_${fiscalYear}_${Date.now()}.xlsx`;
+  XLSX.writeFile(wb, fileName);
+}
+
