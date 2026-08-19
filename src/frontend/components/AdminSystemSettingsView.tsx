@@ -13,7 +13,12 @@ import {
   deleteCustomCategory,
   getCategoryLabel,
   getCategoryOrder,
-  defaultCategoryOrder
+  defaultCategoryOrder,
+  defaultCategoryLabels,
+  getDisabledStandardCategories,
+  disableStandardCategory,
+  restoreStandardCategory,
+  resetAllCategoriesToDefault
 } from '../data/catalog';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption, CATEGORY_BUTTON_STYLES } from './TableControlPanel';
@@ -56,7 +61,8 @@ import {
   Info,
   Layers,
   Building2,
-  Users
+  Users,
+  RotateCcw
 } from 'lucide-react';
 
 interface AdminSystemSettingsViewProps {
@@ -154,8 +160,10 @@ export const AdminSystemSettingsView: React.FC<AdminSystemSettingsViewProps> = (
 
   // Custom Category States
   const [categoriesVersion, setCategoriesVersion] = useState(0);
+  const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
   const [customCatKey, setCustomCatKey] = useState('');
   const [customCatLabel, setCustomCatLabel] = useState('');
+  const [showAdvancedKey, setShowAdvancedKey] = useState(false);
 
   useEffect(() => {
     const handleUpdated = () => setCategoriesVersion(v => v + 1);
@@ -297,20 +305,23 @@ export const AdminSystemSettingsView: React.FC<AdminSystemSettingsViewProps> = (
   }, []);
 
   // Compile full dynamic categories and material list
+  const disabledStandardCategories = getDisabledStandardCategories();
+  const activeStandardCategories = defaultCategoryOrder.filter(c => !disabledStandardCategories.includes(c));
+
   const activeCustomCategories = {
     ...getCustomCategories(),
     ...(customCategories || {})
   };
 
   const currentCategoryOrder = Array.from(new Set([
-    ...defaultCategoryOrder,
+    ...activeStandardCategories,
     ...Object.keys(activeCustomCategories),
     ...Object.keys(customItems || {})
   ]));
 
   const getCategoryDisplay = (catId: string): string => {
     if (activeCustomCategories[catId]) return activeCustomCategories[catId];
-    return getCategoryLabel(catId) || catId;
+    return getCategoryLabel(catId) || defaultCategoryLabels[catId] || catId;
   };
 
   const allList: MaterialItem[] = [];
@@ -455,9 +466,8 @@ export const AdminSystemSettingsView: React.FC<AdminSystemSettingsViewProps> = (
       key = 'cat_' + Date.now().toString(36);
     }
 
-    if (currentCategoryOrder.includes(key)) {
-      onToastAlert(`รหัสหมวดหมู่ '${key}' มีอยู่ในระบบแล้ว กรุณาระบุรหัสอื่น`, 'error');
-      return;
+    if (currentCategoryOrder.includes(key) && !activeCustomCategories[key]) {
+      key = key + '_' + Math.random().toString(36).substring(2, 5);
     }
 
     saveCustomCategory(key, label);
@@ -468,24 +478,58 @@ export const AdminSystemSettingsView: React.FC<AdminSystemSettingsViewProps> = (
 
     setCategoriesVersion(v => v + 1);
     setNewCategory(key);
-    onToastAlert(`เพิ่มหมวดหมู่ใหม่ "${label}" สำเร็จ พร้อมเลือกให้ในแบบฟอร์มขั้นตอนที่ 2 ด้านล่างแล้ว`, 'success');
+    setFilterCategory(key);
+    onToastAlert(`เพิ่มหมวดหมู่ใหม่ "${label}" สำเร็จ พร้อมเลือกให้ในแบบฟอร์มด้านล่างแล้ว`, 'success');
     setCustomCatKey('');
     setCustomCatLabel('');
+    setShowAdvancedKey(false);
+    setShowAddCategoryModal(false);
   };
 
   const handleDeleteCategory = (catKey: string, catLabel: string) => {
+    const isStandard = defaultCategoryOrder.includes(catKey);
+    const count = allList.filter(x => x.category === catKey).length;
+
     onRequestConfirm({
-      title: 'ยืนยันการลบหมวดหมู่วัสดุ',
-      message: `คุณต้องการลบหมวดหมู่ "${catLabel}" (${catKey}) หรือไม่? รายการที่สังกัดหมวดหมู่นี้จะยังคงอยู่ในระบบ`,
+      title: isStandard ? 'ยืนยันการลบ/ปิดการใช้งานหมวดหมู่มาตรฐาน' : 'ยืนยันการลบหมวดหมู่วัสดุ',
+      message: count > 0 
+        ? `หมวดหมู่ "${catLabel}" มีรายการวัสดุอยู่ในระบบ ${count} รายการ ต้องการลบหมวดนี้ออกจากระบบหรือไม่? (รายการวัสดุจะไม่สูญหาย แต่หมวดหมู่นี้จะไม่ปรากฏให้เลือกในระบบอีก)`
+        : `คุณต้องการลบหมวดหมู่ "${catLabel}" (${catKey}) ออกจากระบบหรือไม่?`,
       confirmText: 'ลบหมวดหมู่',
       variant: 'danger',
       onConfirm: () => {
-        if (onDeleteCustomCategory) {
-          onDeleteCustomCategory(catKey, catLabel);
+        if (isStandard) {
+          disableStandardCategory(catKey);
         } else {
-          deleteCustomCategory(catKey);
+          if (onDeleteCustomCategory) {
+            onDeleteCustomCategory(catKey, catLabel);
+          } else {
+            deleteCustomCategory(catKey);
+          }
         }
+        setCategoriesVersion(v => v + 1);
+        if (filterCategory === catKey) setFilterCategory('all');
         onToastAlert(`ลบหมวดหมู่ "${catLabel}" เรียบร้อยแล้ว`, 'info');
+      }
+    });
+  };
+
+  const handleRestoreStandardCategory = (catKey: string, catLabel: string) => {
+    restoreStandardCategory(catKey);
+    setCategoriesVersion(v => v + 1);
+    onToastAlert(`คืนค่าหมวดหมู่ "${catLabel}" กลับสู่ระบบสำเร็จ`, 'success');
+  };
+
+  const handleResetAllCategories = () => {
+    onRequestConfirm({
+      title: 'คืนค่าหมวดหมู่มาตรฐานทั้งหมด',
+      message: 'คุณต้องการคืนค่าหมวดหมู่มาตรฐานทั้ง 14 หมวดกลับสู่ระบบใช่หรือไม่?',
+      confirmText: 'คืนค่าทั้งหมด',
+      variant: 'primary',
+      onConfirm: () => {
+        resetAllCategoriesToDefault();
+        setCategoriesVersion(v => v + 1);
+        onToastAlert('คืนค่าหมวดหมู่มาตรฐานทั้ง 14 หมวดกลับสู่ระบบสำเร็จ', 'success');
       }
     });
   };
@@ -689,144 +733,70 @@ export const AdminSystemSettingsView: React.FC<AdminSystemSettingsViewProps> = (
             </div>
           </div>
 
-          {/* 1. Add Custom Category Card (Top) */}
-          <div className="bg-purple-50/40 border border-purple-200/80 rounded-3xl p-6 shadow-xs space-y-4">
+          {/* 1. Add New Material Item Form Card (Compact) */}
+          <div id="add-material-form-card" className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <FolderPlus className="w-4 h-4 text-purple-600" />
-                <span>เพิ่มหมวดหมู่วัสดุใหม่ (Custom Category)</span>
-              </h3>
-              <span className="text-[11px] text-purple-700 bg-purple-100/80 px-2.5 py-0.5 rounded-full font-medium">
-                ขั้นตอนที่ 1: สร้างหมวดหมู่ใหม่ (หากต้องการ)
-              </span>
-            </div>
-
-            <form onSubmit={handleCreateCustomCategory} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-              <div className="sm:col-span-4 space-y-1">
-                <label className="block text-xs font-bold text-slate-700">
-                  รหัสหมวดหมู่ (เว้นว่างได้ ระบบสร้างให้อัตโนมัติ)
-                </label>
-                <input
-                  type="text"
-                  value={customCatKey}
-                  onChange={(e) => setCustomCatKey(e.target.value)}
-                  placeholder="เช่น nutrition, dental, lab (หรือเว้นว่าง)"
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-
-              <div className="sm:col-span-5 space-y-1">
-                <label className="block text-xs font-bold text-slate-700">
-                  ชื่อหมวดหมู่วัสดุ (ภาษาไทย) <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={customCatLabel}
-                  onChange={(e) => setCustomCatLabel(e.target.value)}
-                  placeholder="เช่น วัสดุโภชนาการและอาหาร, วัสดุทันตกรรม"
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-purple-500"
-                  required
-                />
-              </div>
-
-              <div className="sm:col-span-3">
-                <button
-                  type="submit"
-                  className="w-full py-2 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs transition-all cursor-pointer active:scale-95"
-                >
-                  <FolderPlus className="w-4 h-4" />
-                  <span>บันทึกหมวดหมู่</span>
-                </button>
-              </div>
-            </form>
-
-            {/* List of existing custom categories */}
-            {Object.keys(activeCustomCategories).length > 0 && (
-              <div className="pt-3 border-t border-purple-200/60 flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
-                  <Tag className="w-3.5 h-3.5 text-purple-600" />
-                  หมวดหมู่เพิ่มเติมที่บันทึกไว้ในระบบ:
-                </span>
-                {Object.entries(activeCustomCategories).map(([ckey, clabel]) => {
-                  const count = allList.filter(x => x.category === ckey).length;
-                  return (
-                    <span
-                      key={ckey}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-white text-purple-900 border border-purple-200 text-xs font-bold shadow-2xs"
-                    >
-                      <span>{clabel}</span>
-                      <span className="text-[10px] font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">ID: {ckey}</span>
-                      <span className="px-1.5 py-0.5 rounded-full bg-purple-100 text-[10px] font-mono text-purple-800 font-bold">
-                        {count} รายการ
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteCategory(ckey, String(clabel))}
-                        className="text-slate-400 hover:text-rose-600 p-0.5 rounded hover:bg-rose-50 cursor-pointer transition-colors"
-                        title="ลบหมวดหมู่นี้ออกจากระบบ"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* 2. Add New Material Item Form Card (Bottom) */}
-          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <h3 className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-1.5">
                 <Plus className="w-4 h-4 text-indigo-600" />
-                <span>เพิ่มรายการวัสดุใหม่เข้าแค็ตตาล็อกกลาง</span>
+                <span>เพิ่มรายการวัสดุใหม่เข้าแค็ตตาล็อก</span>
               </h3>
-              <span className="text-[11px] text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full font-medium">
-                ขั้นตอนที่ 2: บันทึกรายการวัสดุเข้าหมวดหมู่
-              </span>
             </div>
 
-            <form onSubmit={handleCreateMaterial} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-              <div className="md:col-span-3 space-y-1">
+            <form onSubmit={handleCreateMaterial} className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-end">
+              <div className="md:col-span-3 space-y-0.5">
                 <label className="block text-xs font-bold text-slate-700">หมวดหมู่</label>
                 <select
                   value={newCategory}
                   onChange={(e) => setNewCategory(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-2 focus:ring-indigo-500"
                 >
-                  {currentCategoryOrder.map(cat => (
-                    <option key={cat} value={cat}>
-                      {getCategoryDisplay(cat)}
-                    </option>
-                  ))}
+                  <optgroup label="หมวดหมู่วัสดุมาตรฐาน">
+                    {activeStandardCategories.map(cat => (
+                      <option key={cat} value={cat}>
+                        {getCategoryDisplay(cat)}
+                      </option>
+                    ))}
+                  </optgroup>
+                  {Object.keys(activeCustomCategories).length > 0 && (
+                    <optgroup label="หมวดหมู่ที่สร้างขึ้นเอง (Custom)">
+                      {Object.entries(activeCustomCategories)
+                        .filter(([k]) => !activeStandardCategories.includes(k))
+                        .map(([k, label]) => (
+                          <option key={k} value={k}>
+                            {label} ({k})
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
 
-              <div className="md:col-span-4 space-y-1">
+              <div className="md:col-span-4 space-y-0.5">
                 <label className="block text-xs font-bold text-slate-700">ชื่อรายการวัสดุ</label>
                 <input
+                  id="add-material-name-input"
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="เช่น กระดาษ A4 80 แกรม"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500"
                   required
                 />
               </div>
 
-              <div className="md:col-span-2 space-y-1">
+              <div className="md:col-span-2 space-y-0.5">
                 <label className="block text-xs font-bold text-slate-700">หน่วยนับ</label>
                 <input
                   type="text"
                   value={newUnit}
                   onChange={(e) => setNewUnit(e.target.value)}
                   placeholder="เช่น รีม, ด้าม"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-indigo-500"
                   required
                 />
               </div>
 
-              <div className="md:col-span-2 space-y-1">
+              <div className="md:col-span-2 space-y-0.5">
                 <label className="block text-xs font-bold text-slate-700">ราคากลาง (บาท)</label>
                 <input
                   type="number"
@@ -835,14 +805,14 @@ export const AdminSystemSettingsView: React.FC<AdminSystemSettingsViewProps> = (
                   value={newPrice === 0 ? '' : newPrice}
                   onChange={(e) => setNewPrice(parseFloat(e.target.value) || 0)}
                   placeholder="0.00"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:ring-2 focus:ring-indigo-500"
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
               <div className="md:col-span-1">
                 <button
                   type="submit"
-                  className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer active:scale-95"
+                  className="w-full py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer active:scale-95"
                 >
                   <Plus className="w-4 h-4" />
                   <span>เพิ่ม</span>
@@ -851,41 +821,156 @@ export const AdminSystemSettingsView: React.FC<AdminSystemSettingsViewProps> = (
             </form>
           </div>
 
-          {/* Table & Filtering Section */}
-          <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4">
-            {/* Filter Buttons */}
+          {/* 2. Unified Table & All-in-One Category Management Section */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3.5">
+            {/* Header & Quick Action Buttons */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-600" />
+                <span className="text-xs sm:text-sm font-bold text-slate-800">
+                  หมวดหมู่วัสดุและรายการในระบบ ({currentCategoryOrder.length} หมวด | รวม {allList.length} รายการ)
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {disabledStandardCategories.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleResetAllCategories}
+                    className="text-[11px] text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-xl font-bold flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                    title="คืนค่าหมวดหมู่มาตรฐานทั้งหมดที่เคยลบออกไป"
+                  >
+                    <RotateCcw className="w-3 h-3 text-amber-600" />
+                    <span>คืนค่าหมวดมาตรฐาน ({disabledStandardCategories.length})</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowAddCategoryModal(true)}
+                  className="text-[11px] text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-3 py-1 rounded-xl font-bold flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                  title="สร้างหมวดหมู่ใหม่เพิ่มเติมในระบบ"
+                >
+                  <FolderPlus className="w-3.5 h-3.5 text-purple-600" />
+                  <span>+ สร้างหมวดหมู่ใหม่</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Unified All-in-One Category Pills Bar (Filter + Count + Delete) */}
             <div className="flex flex-wrap items-center gap-1.5">
+              {/* All Items Button */}
               <button
                 type="button"
                 onClick={() => setFilterCategory('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                   filterCategory === 'all'
-                    ? 'bg-slate-900 text-white shadow-xs'
+                    ? 'bg-slate-900 text-white shadow-xs ring-2 ring-slate-900/20'
                     : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                 }`}
               >
-                ทั้งหมด ({allList.length})
+                <span>ทั้งหมด</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                  filterCategory === 'all' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-600'
+                }`}>
+                  {allList.length}
+                </span>
               </button>
 
+              {/* Each Category Pill (Standard & Custom) */}
               {currentCategoryOrder.map(cat => {
                 const count = allList.filter(x => x.category === cat).length;
                 const isSelected = filterCategory === cat;
+                const isCustom = !defaultCategoryOrder.includes(cat);
+                const clabel = isCustom ? (activeCustomCategories[cat] || cat) : (defaultCategoryLabels[cat] || cat);
+
                 return (
-                  <button
+                  <span
                     key={cat}
-                    type="button"
-                    onClick={() => setFilterCategory(cat)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    className={`group inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-xl text-xs font-bold transition-all shadow-2xs ${
                       isSelected
-                        ? 'bg-indigo-600 text-white shadow-xs'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                        ? isCustom
+                          ? 'bg-purple-600 text-white ring-2 ring-purple-600/30'
+                          : 'bg-indigo-600 text-white ring-2 ring-indigo-600/30'
+                        : isCustom
+                          ? 'bg-purple-50/80 hover:bg-purple-100 text-purple-900 border border-purple-200/90'
+                          : 'bg-slate-100 hover:bg-slate-200/80 text-slate-700 border border-slate-200/70'
                     }`}
                   >
-                    {getCategoryDisplay(cat)} ({count})
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFilterCategory(cat);
+                        setNewCategory(cat);
+                      }}
+                      className="flex items-center gap-1.5 cursor-pointer text-left focus:outline-none"
+                      title={`คลิกเพื่อกรองเฉพาะหมวด "${clabel}" และตั้งค่าให้ฟอร์มเพิ่ม`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        isSelected ? 'bg-white' : isCustom ? 'bg-purple-500' : 'bg-indigo-500'
+                      }`} />
+                      <span>{clabel}</span>
+                      {isCustom && (
+                        <span className={`text-[9px] font-mono px-1 py-0.2 rounded ${
+                          isSelected ? 'bg-purple-700 text-purple-100' : 'bg-purple-100/90 text-purple-700'
+                        }`}>
+                          ID:{cat}
+                        </span>
+                      )}
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                        isSelected
+                          ? 'bg-white/20 text-white'
+                          : isCustom
+                            ? count > 0 ? 'bg-purple-200/90 text-purple-900' : 'bg-white text-purple-400'
+                            : count > 0 ? 'bg-indigo-100 text-indigo-800' : 'bg-white text-slate-400'
+                      }`}>
+                        {count}
+                      </span>
+                    </button>
+
+                    {/* Delete Icon Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteCategory(cat, clabel);
+                      }}
+                      className={`p-0.5 rounded cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'text-white/60 hover:text-white hover:bg-white/20'
+                          : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                      }`}
+                      title={`ลบหมวดหมู่ "${clabel}" ออกจากระบบ`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </span>
                 );
               })}
             </div>
+
+            {/* Restorable standard categories banner (if any deleted) */}
+            {disabledStandardCategories.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 p-2 bg-amber-50/70 border border-amber-200/80 rounded-xl text-xs">
+                <span className="text-[11px] font-bold text-amber-800 flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                  หมวดหมู่มาตรฐานที่ถูกซ่อน/ลบ ({disabledStandardCategories.length} หมวด):
+                </span>
+                {disabledStandardCategories.map(ckey => {
+                  const clabel = defaultCategoryLabels[ckey] || ckey;
+                  return (
+                    <button
+                      key={ckey}
+                      type="button"
+                      onClick={() => handleRestoreStandardCategory(ckey, clabel)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-medium transition-all cursor-pointer shadow-2xs"
+                      title="คลิกเพื่อนำหมวดนี้กลับคืนสู่ระบบ"
+                    >
+                      <span>+ คืนค่า {clabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Search and Batch Actions */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
@@ -1028,8 +1113,58 @@ export const AdminSystemSettingsView: React.FC<AdminSystemSettingsViewProps> = (
                 <tbody className="divide-y divide-slate-100">
                   {pageItems.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-400">
-                        ไม่พบรายการวัสดุที่ค้นหา
+                      <td colSpan={7} className="py-12 px-4 text-center">
+                        <div className="max-w-md mx-auto flex flex-col items-center justify-center space-y-3">
+                          <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-2xs">
+                            <FolderPlus className="w-6 h-6" />
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-sm font-bold text-slate-800">
+                              {searchTerm 
+                                ? `ไม่พบรายการวัสดุที่ตรงกับคำค้น "${searchTerm}"`
+                                : filterCategory !== 'all'
+                                ? `หมวดหมู่ "${getCategoryDisplay(filterCategory)}" ยังไม่มีรายการวัสดุ`
+                                : 'ยังไม่มีรายการวัสดุในแค็ตตาล็อกกลาง'}
+                            </div>
+                            <p className="text-xs text-slate-500">
+                              {searchTerm
+                                ? 'ลองตรวจสอบคำสะกด หรือล้างคำค้นหาเพื่อดูรายการทั้งหมด'
+                                : filterCategory !== 'all'
+                                ? `หมวดหมู่นี้ถูกสร้างในระบบเรียบร้อยแล้ว ท่านสามารถเริ่มเพิ่มรายการวัสดุเข้าหมวดนี้ได้ทันที`
+                                : 'คุณสามารถเพิ่มรายการวัสดุใหม่ผ่านแบบฟอร์มด้านบน หรือนำเข้าไฟล์ Excel'}
+                            </p>
+                          </div>
+                          {!searchTerm && filterCategory !== 'all' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewCategory(filterCategory);
+                                const formElem = document.getElementById('add-material-form-card');
+                                if (formElem) {
+                                  formElem.scrollIntoView({ behavior: 'smooth' });
+                                }
+                                const nameInput = document.getElementById('add-material-name-input');
+                                if (nameInput) {
+                                  (nameInput as HTMLInputElement).focus();
+                                }
+                              }}
+                              className="mt-1 inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer active:scale-95"
+                            >
+                              <Plus className="w-4 h-4" />
+                              <span>+ เพิ่มรายการแรกในหมวด {getCategoryDisplay(filterCategory)}</span>
+                            </button>
+                          )}
+                          {searchTerm && (
+                            <button
+                              type="button"
+                              onClick={() => setSearchTerm('')}
+                              className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>ล้างคำค้นหา</span>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ) : (
@@ -1665,6 +1800,92 @@ export const AdminSystemSettingsView: React.FC<AdminSystemSettingsViewProps> = (
                 ยืนยันนำเข้า {importedPreviewItems.length} รายการ
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- ADD CATEGORY MODAL --- */}
+      {showAddCategoryModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                <FolderPlus className="w-4 h-4 text-purple-600" />
+                <span>เพิ่มหมวดหมู่วัสดุใหม่ (Create Category)</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowAddCategoryModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateCustomCategory} className="space-y-3">
+              <div className="space-y-1">
+                <label className="block text-xs font-bold text-slate-700">
+                  ชื่อหมวดหมู่วัสดุ (ภาษาไทย) <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={customCatLabel}
+                  onChange={(e) => setCustomCatLabel(e.target.value)}
+                  placeholder="เช่น วัสดุโภชนาการและอาหาร, วัสดุสวนหย่อม"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-purple-500 font-medium"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              {/* Collapsible Advanced ID option */}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedKey(!showAdvancedKey)}
+                  className="text-[11px] text-purple-600 hover:text-purple-800 font-medium cursor-pointer underline flex items-center gap-1"
+                >
+                  <span>{showAdvancedKey ? '▲ ซ่อนการตั้งค่ารหัส ID' : '▼ กำหนดรหัส ID หมวดหมู่เอง (ทางเลือก)'}</span>
+                </button>
+
+                {showAdvancedKey && (
+                  <div className="mt-2 p-3 bg-purple-50/50 border border-purple-200 rounded-xl space-y-1 animate-in fade-in">
+                    <label className="block text-[11px] font-bold text-slate-700">
+                      รหัสหมวดหมู่ภาษาอังกฤษ (Key/ID)
+                    </label>
+                    <input
+                      type="text"
+                      value={customCatKey}
+                      onChange={(e) => setCustomCatKey(e.target.value)}
+                      placeholder="เช่น nutrition, dental, garden (หากเว้นว่าง ระบบสร้างให้อัตโนมัติ)"
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono text-slate-900 focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddCategoryModal(false);
+                    setCustomCatLabel('');
+                    setCustomCatKey('');
+                    setShowAdvancedKey(false);
+                  }}
+                  className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-2xs transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+                >
+                  <FolderPlus className="w-3.5 h-3.5" />
+                  <span>บันทึกหมวดหมู่</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

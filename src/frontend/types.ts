@@ -44,8 +44,6 @@ export interface MaterialItem {
   active: boolean;
   isCustom?: boolean;
   gpscCode?: string;
-  stockQty?: number;
-  stockStatus?: 'low' | 'adequate' | 'excess';
 }
 
 export interface DepartmentRevisionPermission {
@@ -89,8 +87,6 @@ export interface RequestItem {
 
   // Material item metadata
   gpscCode?: string;
-  stockQty?: number;
-  stockStatus?: 'low' | 'adequate' | 'excess';
 
   // Requester identity
   requesterName?: string;

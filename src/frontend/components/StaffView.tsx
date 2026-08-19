@@ -11,18 +11,19 @@ import {
   DEPARTMENTS, 
   deptById, 
   guessUnit, 
+  guessPrice,
+  fmtBaht,
   historyFor, 
   STATUS_LABEL,
   getItemCategory,
-  getItemGpscCode,
-  getItemStockInfo
+  getItemGpscCode
 } from '../data/catalog';
 import { MiniBarsChart } from './MiniBarsChart';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
 import { AuditTrailModal } from './AuditTrailModal';
 import { sortItems } from '../utils/sortHelper';
-import { Plus, Info, Send, AlertCircle, FileText, ArrowUpDown, Edit3, CheckCircle2, TrendingDown, TrendingUp, Minus, UserCheck, PackageCheck, Crown, ArrowRightLeft, Clock, Filter, Search, ShieldCheck, Sparkles, Unlock, Lock, RefreshCw, XCircle, PlusCircle, Zap, History, SlidersHorizontal } from 'lucide-react';
+import { Plus, Info, Send, AlertCircle, FileText, ArrowUpDown, Edit3, CheckCircle2, TrendingDown, TrendingUp, Minus, UserCheck, PackageCheck, Crown, ArrowRightLeft, Clock, Filter, Search, ShieldCheck, Sparkles, Unlock, Lock, RefreshCw, XCircle, PlusCircle, Zap, History, SlidersHorizontal, Trash2, ShoppingCart, Copy, ChevronDown, Check } from 'lucide-react';
 
 interface StaffViewProps {
   currentUser: User;
@@ -65,7 +66,6 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const [selectedFiscalYearFilter, setSelectedFiscalYearFilter] = useState<string>('all');
   const [selectedDeptId, setSelectedDeptId] = useState<string>(currentUser.deptId || 'thurakan');
   const [searchTerm, setSearchTerm] = useState('');
-  const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'adequate' | 'excess'>('all');
   const [selectedAuditItem, setSelectedAuditItem] = useState<RequestItem | null>(null);
   const [sortField, setSortField] = useState<'name' | 'lastYear' | 'requested' | 'diff'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -75,6 +75,29 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const currentDeptPerm = revisionPermissions[selectedDeptId];
   const [revisionInputs, setRevisionInputs] = useState<Record<string, { qty: number; reason: string; type: 'add' | 'modify' | 'cancel' }>>({});
   const [overallRevisionReason, setOverallRevisionReason] = useState(`ขอปรับปรุงแผนงบประมาณรอบ 6 เดือน ประจำปีงบประมาณ ${fiscalYear}`);
+  
+  // Revision sub-tab navigation
+  const [revisionSubTab, setRevisionSubTab] = useState<'approved' | 'new_items'>('approved');
+  const [revApprovedSearch, setRevApprovedSearch] = useState('');
+  const [revApprovedCat, setRevApprovedCat] = useState<CategoryId | 'all'>('all');
+  const [revApprovedOnlyModified, setRevApprovedOnlyModified] = useState(false);
+  const [revApprovedPage, setRevApprovedPage] = useState(1);
+  const [revApprovedPageSize, setRevApprovedPageSize] = useState<number | 'all'>(10);
+
+  // Revision survey sheet state for adding new items (Full Catalog Survey layout)
+  const [revisionSurveyCat, setRevisionSurveyCat] = useState<CategoryId | 'all'>('all');
+  const [revisionSurveySearch, setRevisionSurveySearch] = useState('');
+  const [revisionNewQtyInputs, setRevisionNewQtyInputs] = useState<Record<string, number>>({});
+  const [revisionNewReasons, setRevisionNewReasons] = useState<Record<string, string>>({});
+  const [revisionSurveyPage, setRevisionSurveyPage] = useState(1);
+  const [revisionSurveyPageSize, setRevisionSurveyPageSize] = useState<number | 'all'>(10);
+  const [revisionSurveyOnlySelected, setRevisionSurveyOnlySelected] = useState(false);
+  const [revSortField, setRevSortField] = useState<'name' | 'category' | 'lastYear' | 'requested' | 'diff'>('name');
+  const [revSortOrder, setRevSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [revisionCustomItems, setRevisionCustomItems] = useState<{ name: string; category: CategoryId; unit: string }[]>([]);
+  const [revCustomName, setRevCustomName] = useState('');
+  const [revCustomCat, setRevCustomCat] = useState<CategoryId>('office');
+  const [revCustomUnit, setRevCustomUnit] = useState('ชิ้น');
 
   const fiscalYearOptions = useMemo(() => {
     const yearsInRequests = requests.map(r => r.fiscalYear).filter(Boolean) as string[];
@@ -106,7 +129,25 @@ export const StaffView: React.FC<StaffViewProps> = ({
   const [submittedSortField, setSubmittedSortField] = useState<'name' | 'category' | 'lastYear' | 'origQty' | 'newQty' | 'status'>('name');
   const [submittedSortOrder, setSubmittedSortOrder] = useState<'asc' | 'desc'>('asc');
 
+  // UI Improvements: Table Density State
+  const [tableDensity, setTableDensity] = useState<'compact' | 'standard'>('compact');
+
   const currentDept = deptById(selectedDeptId);
+
+  // Real-time Summary Calculations for Sticky Footer
+  const totalSelectedItemsCount = useMemo(() => {
+    return Object.keys(qtyInputs).filter(k => (qtyInputs[k] || 0) > 0).length;
+  }, [qtyInputs]);
+
+  const totalEstimatedBudget = useMemo(() => {
+    return Object.entries(qtyInputs).reduce((sum, [itemName, qty]) => {
+      const numQty = typeof qty === 'number' ? qty : Number(qty) || 0;
+      if (numQty <= 0) return sum;
+      const unit = guessUnit(itemName);
+      const price = guessPrice(itemName, unit);
+      return sum + (price * numQty);
+    }, 0);
+  }, [qtyInputs]);
 
   // Available catalog items for category including custom ones
   const rawItems = useMemo(() => {
@@ -118,21 +159,15 @@ export const StaffView: React.FC<StaffViewProps> = ({
     return Array.from(new Set([...(CATALOG[selectedCategory] || []), ...customForCat]));
   }, [selectedCategory, customItems]);
   
-  // Search filter for catalog items (including GPSC & stock status)
+  // Search filter for catalog items (including GPSC code)
   const filteredRaw = useMemo(() => {
     return rawItems.filter(item => {
       const q = searchTerm.toLowerCase().trim();
       const gpsc = getItemGpscCode(item).toLowerCase();
       const matchSearch = q === '' || item.toLowerCase().includes(q) || gpsc.includes(q);
-      if (!matchSearch) return false;
-
-      if (stockFilter !== 'all') {
-        const { stockStatus } = getItemStockInfo(item);
-        if (stockStatus !== stockFilter) return false;
-      }
-      return true;
+      return matchSearch;
     });
-  }, [rawItems, searchTerm, stockFilter]);
+  }, [rawItems, searchTerm]);
   
   const handleHeaderSort = (field: 'name' | 'lastYear' | 'requested' | 'diff') => {
     if (sortField === field) {
@@ -261,6 +296,12 @@ export const StaffView: React.FC<StaffViewProps> = ({
     return reportSubmittedCats[0] || 'office';
   }, [reportSubmittedCats, activeSheetCat]);
 
+  const reportFinalCategories = reportSubmittedCats;
+  const setReportFinalActiveSheetCat = setActiveSheetCat;
+  const reportFinalItems = useMemo(() => {
+    return reportSubmittedRequests.filter(r => getItemCategory(r.itemName) === reportFinalActiveSheetCat);
+  }, [reportSubmittedRequests, reportFinalActiveSheetCat]);
+
   const submittedCats = useMemo(() => {
     const cats = new Set<CategoryId>();
     submittedRequests.forEach(r => {
@@ -273,6 +314,192 @@ export const StaffView: React.FC<StaffViewProps> = ({
     if (submittedCats.includes(activeSheetCat)) return activeSheetCat;
     return submittedCats[0] || 'office';
   }, [submittedCats, activeSheetCat]);
+
+  // Set of approved items for the selected department (to exclude or distinguish in revision new items survey)
+  const approvedDeptRequests = useMemo(() => {
+    return requests.filter(r => r.deptId === selectedDeptId && (r.status === 'approved' || r.isApproved || r.isRevisionItem));
+  }, [requests, selectedDeptId]);
+
+  const approvedItemNames = useMemo(() => {
+    const set = new Set<string>();
+    approvedDeptRequests.forEach(r => {
+      set.add(r.itemName);
+    });
+    return set;
+  }, [approvedDeptRequests]);
+
+  const canRevise = isDeptUnlockedForRevision || approvedDeptRequests.length > 0 || isAdmin;
+
+  // Filtered approved items for Sub-Tab 1
+  const filteredApprovedRequests = useMemo(() => {
+    let list = [...approvedDeptRequests];
+    if (revApprovedCat !== 'all') {
+      list = list.filter(r => getItemCategory(r.itemName) === revApprovedCat);
+    }
+    if (revApprovedSearch.trim()) {
+      const q = revApprovedSearch.toLowerCase().trim();
+      list = list.filter(r => {
+        const gpsc = getItemGpscCode(r.itemName);
+        return r.itemName.toLowerCase().includes(q) || gpsc.toLowerCase().includes(q);
+      });
+    }
+    if (revApprovedOnlyModified) {
+      list = list.filter(r => {
+        const input = revisionInputs[r.itemName];
+        if (!input) return false;
+        const baseQty = r.revisionBaseQty !== undefined ? r.revisionBaseQty : (r.qtyOriginal ?? r.qtyRequested);
+        return input.type === 'cancel' || input.qty !== baseQty;
+      });
+    }
+    return list;
+  }, [approvedDeptRequests, revApprovedCat, revApprovedSearch, revApprovedOnlyModified, revisionInputs]);
+
+  // Available catalog items for revision new item survey (categorized)
+  const revisionAvailableItems = useMemo(() => {
+    const allCustom = [
+      ...Object.values(customItems).flat(),
+      ...revisionCustomItems.map(c => c.name)
+    ];
+    let pool: string[] = [];
+    if (revisionSurveyCat === 'all') {
+      pool = Array.from(new Set([...ALL_ITEMS, ...allCustom]));
+    } else {
+      const catCustom = [
+        ...(customItems[revisionSurveyCat] || []),
+        ...revisionCustomItems.filter(c => c.category === revisionSurveyCat).map(c => c.name)
+      ];
+      pool = Array.from(new Set([...(CATALOG[revisionSurveyCat] || []), ...catCustom]));
+    }
+
+    // Filter out items already in approved plan (Section 1)
+    let filtered = pool.filter(name => !approvedItemNames.has(name));
+
+    // Filter by selected only if active
+    if (revisionSurveyOnlySelected) {
+      filtered = filtered.filter(name => (revisionNewQtyInputs[name] || 0) > 0);
+    }
+
+    // Search filter
+    if (revisionSurveySearch.trim()) {
+      const q = revisionSurveySearch.toLowerCase().trim();
+      filtered = filtered.filter(name => {
+        const gpsc = getItemGpscCode(name);
+        return name.toLowerCase().includes(q) || gpsc.toLowerCase().includes(q);
+      });
+    }
+
+    return filtered;
+  }, [revisionSurveyCat, customItems, revisionCustomItems, approvedItemNames, revisionSurveySearch, revisionSurveyOnlySelected, revisionNewQtyInputs]);
+
+  // Sort revision new items
+  const sortedRevisionItems = useMemo(() => {
+    const list = [...revisionAvailableItems];
+    list.sort((a, b) => {
+      let comp = 0;
+      if (revSortField === 'name') {
+        comp = a.localeCompare(b, 'th');
+      } else if (revSortField === 'category') {
+        const catA = getItemCategory(a);
+        const catB = getItemCategory(b);
+        comp = catA.localeCompare(catB, 'th');
+      } else if (revSortField === 'lastYear') {
+        const lastA = historyFor(a)[2568] || 0;
+        const lastB = historyFor(b)[2568] || 0;
+        comp = lastA - lastB;
+      } else if (revSortField === 'requested') {
+        const qA = revisionNewQtyInputs[a] || 0;
+        const qB = revisionNewQtyInputs[b] || 0;
+        comp = qA - qB;
+      } else if (revSortField === 'diff') {
+        const diffA = (revisionNewQtyInputs[a] || 0) - (historyFor(a)[2568] || 0);
+        const diffB = (revisionNewQtyInputs[b] || 0) - (historyFor(b)[2568] || 0);
+        comp = diffA - diffB;
+      }
+      return revSortOrder === 'asc' ? comp : -comp;
+    });
+    return list;
+  }, [revisionAvailableItems, revSortField, revSortOrder, revisionNewQtyInputs]);
+
+  // Paginated revision survey items
+  const revisionPagedItems = useMemo(() => {
+    if (revisionSurveyPageSize === 'all') return sortedRevisionItems;
+    const start = (revisionSurveyPage - 1) * (revisionSurveyPageSize as number);
+    return sortedRevisionItems.slice(start, start + (revisionSurveyPageSize as number));
+  }, [sortedRevisionItems, revisionSurveyPage, revisionSurveyPageSize]);
+
+  // List of all newly added items with quantity > 0
+  const revisionNewlyAddedList = useMemo(() => {
+    const list: { itemName: string; category: CategoryId; unit: string; qty: number; reason: string }[] = [];
+    Object.entries(revisionNewQtyInputs).forEach(([name, rawQty]) => {
+      const qty = Number(rawQty) || 0;
+      if (qty > 0 && !approvedItemNames.has(name)) {
+        list.push({
+          itemName: name,
+          category: getItemCategory(name),
+          unit: guessUnit(name),
+          qty,
+          reason: revisionNewReasons[name] || 'ขอเพิ่มรายการใหม่เนื่องจากมีความจำเป็นต้องใช้เพิ่มเติมในรอบ 6 เดือน'
+        });
+      }
+    });
+    return list;
+  }, [revisionNewQtyInputs, approvedItemNames, revisionNewReasons]);
+
+  const handleRevisionHeaderSort = (field: 'name' | 'category' | 'lastYear' | 'requested' | 'diff') => {
+    if (revSortField === field) {
+      setRevSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setRevSortField(field);
+      setRevSortOrder('asc');
+    }
+  };
+
+  const handleRevisionQuickFill = (mode: 'lastYear100' | 'lastYearPlus5' | 'lastYearPlus10' | 'avg3Years' | 'clear') => {
+    const newInputs = { ...revisionNewQtyInputs };
+    const newReasons = { ...revisionNewReasons };
+    if (mode === 'clear') {
+      sortedRevisionItems.forEach(name => {
+        delete newInputs[name];
+        delete newReasons[name];
+      });
+      setRevisionNewQtyInputs(newInputs);
+      setRevisionNewReasons(newReasons);
+      onToastAlert('ล้างค่ารายการขอเพิ่มใหม่ทั้งหมดเรียบร้อยแล้ว', 'info');
+      return;
+    }
+
+    let count = 0;
+    sortedRevisionItems.forEach(name => {
+      const hist = historyFor(name);
+      const last = hist[2568] || 0;
+      let val = 0;
+      if (mode === 'lastYear100') {
+        val = last;
+      } else if (mode === 'lastYearPlus5') {
+        val = Math.round(last * 1.05);
+      } else if (mode === 'lastYearPlus10') {
+        val = Math.round(last * 1.10);
+      } else if (mode === 'avg3Years') {
+        const avg = ((hist[2566] || 0) + (hist[2567] || 0) + (hist[2568] || 0)) / 3;
+        val = Math.round(avg);
+      }
+      if (val > 0) {
+        newInputs[name] = val;
+        if (!newReasons[name]) {
+          newReasons[name] = `ขอเพิ่มรายการใหม่เนื่องจากมีความจำเป็นต้องใช้เพิ่มเติมในรอบ 6 เดือน (อ้างอิงยอดปี 68: ${val} ${guessUnit(name)})`;
+        }
+        count++;
+      }
+    });
+
+    setRevisionNewQtyInputs(newInputs);
+    setRevisionNewReasons(newReasons);
+    const modeLabel = 
+      mode === 'lastYear100' ? 'ดึงยอดใช้จริงปี 2568 (100%)' :
+      mode === 'lastYearPlus5' ? 'ดึงยอดปี 2568 + 5%' :
+      mode === 'lastYearPlus10' ? 'ดึงยอดปี 2568 + 10%' : 'ดึงค่าเฉลี่ย 3 ปีย้อนหลัง';
+    onToastAlert(`ปรับปรุงค่าตั้งต้นรายการขอเพิ่มสำเร็จ (${modeLabel}) จำนวน ${count} รายการ`, 'success');
+  };
 
   const handleExportExcel = () => {
     if (reportSubmittedRequests.length === 0) {
@@ -688,7 +915,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
         </div>
       )}
 
-      {/* TAB 1: แบบสำรวจรายการขอจัดซื้อ (รูปที่ 2 อยู่บน รูปที่ 1) */}
+      {/* TAB 1: แบบสำรวจรายการขอจัดซื้อ */}
       {activeTab === 'request' && (
         <div className="space-y-5">
           {/* Submission Schedule Status Banner */}
@@ -733,7 +960,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
             );
           })()}
 
-          {/* Table Control Panel (รูปที่ 2) */}
+          {/* Table Control Panel */}
           <TableControlPanel
             title="รายการวัสดุ"
             categoryLabel={selectedCategory === 'all' ? 'ทุกหมวดวัสดุ' : CATEGORY_LABELS[selectedCategory]}
@@ -768,7 +995,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
             showSearch={false}
           />
 
-          {/* Add Custom Item Card (รูปที่ 1) */}
+          {/* Add Custom Item Card */}
           {!isPlanFrozen && (
             <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
               <h3 className="text-sm font-bold text-slate-900 mb-1">
@@ -812,7 +1039,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
             </div>
           )}
 
-          {/* Catalog Survey Table (รูปที่ 1) */}
+          {/* Catalog Survey Table */}
           <div className="bg-[#F0F4F8] border border-white/80 rounded-3xl p-5 shadow-[8px_8px_20px_rgba(163,177,198,0.3),-8px_-8px_20px_rgba(255,255,255,0.8)] space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-200/80 pb-3">
               <div>
@@ -821,12 +1048,38 @@ export const StaffView: React.FC<StaffViewProps> = ({
                   <span>แบบสำรวจรายการวัสดุ ({sortedItems.length} รายการ)</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  กรอกจำนวนความต้องการวัสดุประจำปีงบประมาณ {fiscalYear} หรือใช้ปุ่ม Quick Fill ด้านล่างเพื่อดึงยอดอัตโนมัติ
+                  กรอกจำนวนความต้องการวัสดุประจำปีงบประมาณ {fiscalYear} หรือใช้ปุ่มดึงยอดด้านล่างเพื่อกรอกอัตโนมัติ
                 </p>
               </div>
 
-              {/* Advanced Search & GPSC search */}
-              <div className="flex items-center gap-2 flex-wrap">
+              {/* Advanced Search & Density Toggle */}
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {/* Table Density Switch */}
+                <div className="flex items-center gap-1 bg-slate-200/70 p-0.5 rounded-xl text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setTableDensity('compact')}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                      tableDensity === 'compact' ? 'bg-white text-indigo-900 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title="โหมดกะทัดรัด (Compact) เพื่อดูรายการได้มากขึ้น"
+                  >
+                    <SlidersHorizontal className="w-3 h-3" />
+                    <span>แบบกระชับ</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTableDensity('standard')}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
+                      tableDensity === 'standard' ? 'bg-white text-indigo-900 shadow-2xs font-bold' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                    title="โหมดมาตรฐาน (Standard)"
+                  >
+                    <span>มาตรฐาน</span>
+                  </button>
+                </div>
+
+                {/* Standard Search Input */}
                 <div className="relative shrink-0 w-full sm:w-64">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
                   <input
@@ -837,55 +1090,66 @@ export const StaffView: React.FC<StaffViewProps> = ({
                       setCurrentPage(1);
                     }}
                     placeholder="ค้นหาชื่อวัสดุ หรือรหัส GPSC..."
-                    className="w-full text-xs pl-8.5 pr-3 py-2 border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium placeholder-slate-400 shadow-[inset_1.5px_1.5px_3px_rgba(163,177,198,0.3)]"
+                    className="w-full text-xs pl-8.5 pr-8 py-2 border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium placeholder-slate-400 shadow-[inset_1.5px_1.5px_3px_rgba(163,177,198,0.3)]"
                   />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      title="ล้างคำค้นหา"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Quick Fill Toolbar & Stock Filters */}
-            <div className="bg-white/80 border border-slate-200/80 rounded-2xl p-3 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-3 shadow-xs">
+            {/* Quick Fill Toolbar */}
+            <div className="bg-white/90 border border-slate-200/90 rounded-2xl p-3 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-3 shadow-xs">
               {/* Quick Fill Preset Buttons */}
               <div className="flex items-center gap-1.5 flex-wrap text-xs">
-                <span className="font-extrabold text-indigo-900 flex items-center gap-1 text-[11px] mr-1">
-                  <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-                  <span>กรอกด่วน (Quick Fill):</span>
+                <span className="font-extrabold text-indigo-950 flex items-center gap-1.5 text-xs mr-1 bg-indigo-50 border border-indigo-200 px-2.5 py-1.5 rounded-xl">
+                  <Copy className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>คัดลอกจากคำขอเดิม / ปีก่อน:</span>
                 </span>
                 <button
                   type="button"
                   onClick={() => handleQuickFill('lastYear100')}
                   disabled={isPlanFrozen}
-                  className="px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50 flex items-center gap-1"
                   title="ดึงยอดใช้จริงปี 2568 มาใส่ 100% ทุกรายการ"
                 >
-                  ⚡ ดึงยอดปี 68 (100%)
+                  <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                  <span>ดึงยอดปี 68 (100%)</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => handleQuickFill('lastYearPlus5')}
                   disabled={isPlanFrozen}
-                  className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+                  className="px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
                   title="ดึงยอดใช้จริงปี 2568 + 5%"
                 >
-                  ⚡ ปี 68 + 5%
+                  📈 ปี 68 + 5%
                 </button>
                 <button
                   type="button"
                   onClick={() => handleQuickFill('lastYearPlus10')}
                   disabled={isPlanFrozen}
-                  className="px-2.5 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+                  className="px-2.5 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
                   title="ดึงยอดใช้จริงปี 2568 + 10%"
                 >
-                  ⚡ ปี 68 + 10%
+                  🚀 ปี 68 + 10%
                 </button>
                 <button
                   type="button"
                   onClick={() => handleQuickFill('avg3Years')}
                   disabled={isPlanFrozen}
-                  className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
                   title="ดึงยอดเฉลี่ย 3 ปีย้อนหลัง (2566-2568)"
                 >
-                  ⚡ เฉลี่ย 3 ปีย้อนหลัง
+                  📊 เฉลี่ย 3 ปีย้อนหลัง
                 </button>
                 <button
                   type="button"
@@ -893,77 +1157,28 @@ export const StaffView: React.FC<StaffViewProps> = ({
                   disabled={isPlanFrozen}
                   className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border border-slate-200 font-semibold transition-all text-xs cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
                 >
-                  ล้างค่า
-                </button>
-              </div>
-
-              {/* Stock Status Filter Chips */}
-              <div className="flex items-center gap-1.5 flex-wrap text-xs">
-                <span className="font-bold text-slate-500 text-[11px] mr-1">สถานะคลัง:</span>
-                <button
-                  type="button"
-                  onClick={() => { setStockFilter('all'); setCurrentPage(1); }}
-                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    stockFilter === 'all'
-                      ? 'bg-slate-800 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  ทั้งหมด
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setStockFilter('low'); setCurrentPage(1); }}
-                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    stockFilter === 'low'
-                      ? 'bg-rose-600 text-white shadow-xs'
-                      : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
-                  }`}
-                >
-                  ⚠️ คงคลังต่ำ
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setStockFilter('adequate'); setCurrentPage(1); }}
-                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    stockFilter === 'adequate'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
-                  }`}
-                >
-                  ✓ คงคลังพอดี
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setStockFilter('excess'); setCurrentPage(1); }}
-                  className={`px-2 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    stockFilter === 'excess'
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'
-                  }`}
-                >
-                  📦 สต็อกสูง
+                  🧹 ล้างค่า
                 </button>
               </div>
             </div>
 
             <div className="overflow-x-auto bg-white rounded-2xl border border-slate-200/80 shadow-xs">
               <table className="w-full text-base text-left">
-                <thead className="bg-slate-50/90 text-slate-600 uppercase font-mono text-sm border-b border-slate-200 select-none">
+                <thead className="bg-slate-50/90 text-slate-600 uppercase font-mono text-xs sm:text-sm border-b border-slate-200 select-none">
                   <tr>
                     <th 
                       onClick={() => handleHeaderSort('name')}
-                      className="p-3 cursor-pointer hover:bg-slate-100 transition-colors"
+                      className={`${tableDensity === 'compact' ? 'p-2.5 text-xs' : 'p-3 text-sm'} cursor-pointer hover:bg-slate-100 transition-colors`}
                     >
                       <div className="flex items-center gap-1">
-                        <span>รายการ / รหัส GPSC / สถานะคงคลัง</span>
+                        <span>รายการ / รหัส GPSC</span>
                         <ArrowUpDown className="w-3 h-3 text-slate-400" />
                       </div>
                     </th>
-                    <th className="p-3">ประเภทวัสดุ</th>
+                    <th className={tableDensity === 'compact' ? 'p-2.5 text-xs' : 'p-3 text-sm'}>ประเภทวัสดุ</th>
                     <th 
                       onClick={() => handleHeaderSort('lastYear')}
-                      className="p-3 text-right cursor-pointer hover:bg-slate-100 transition-colors"
+                      className={`${tableDensity === 'compact' ? 'p-2.5 text-xs' : 'p-3 text-sm'} text-right cursor-pointer hover:bg-slate-100 transition-colors`}
                     >
                       <div className="flex items-center justify-end gap-1">
                         <span>ปี 2568</span>
@@ -972,7 +1187,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     </th>
                     <th 
                       onClick={() => handleHeaderSort('requested')}
-                      className="p-3 text-right w-44 cursor-pointer hover:bg-slate-100 transition-colors"
+                      className={`${tableDensity === 'compact' ? 'p-2.5 text-xs' : 'p-3 text-sm'} text-right w-44 cursor-pointer hover:bg-slate-100 transition-colors`}
                     >
                       <div className="flex items-center justify-end gap-1">
                         <span>ขอปี {fiscalYear}</span>
@@ -981,7 +1196,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     </th>
                     <th 
                       onClick={() => handleHeaderSort('diff')}
-                      className="p-3 text-right cursor-pointer hover:bg-slate-100 transition-colors"
+                      className={`${tableDensity === 'compact' ? 'p-2.5 text-xs' : 'p-3 text-sm'} text-right cursor-pointer hover:bg-slate-100 transition-colors`}
                     >
                       <div className="flex items-center justify-end gap-1">
                         <span>ผลต่าง</span>
@@ -996,7 +1211,6 @@ export const StaffView: React.FC<StaffViewProps> = ({
                     const last = hist[2568];
                     const unit = guessUnit(name);
                     const gpsc = getItemGpscCode(name);
-                    const { stockQty, stockStatus } = getItemStockInfo(name);
 
                     const currentVal = qtyInputs[name];
                     let diffText = '—';
@@ -1019,34 +1233,21 @@ export const StaffView: React.FC<StaffViewProps> = ({
 
                     return (
                       <tr key={name} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="p-3">
+                        <td className={tableDensity === 'compact' ? 'p-2' : 'p-3'}>
                           <div className="font-semibold text-slate-900 text-xs sm:text-sm">{name}</div>
-                          <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px]">
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap text-[11px]">
                             <span className="font-mono text-indigo-700 font-bold bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded">
                               GPSC: {gpsc}
                             </span>
-                            {stockStatus === 'low' ? (
-                              <span className="text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.2 rounded font-bold">
-                                ⚠️ คงคลังต่ำ: {stockQty} {unit}
-                              </span>
-                            ) : stockStatus === 'excess' ? (
-                              <span className="text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded font-medium">
-                                📦 สต็อกสูง: {stockQty} {unit}
-                              </span>
-                            ) : (
-                              <span className="text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded font-medium">
-                                ✓ คงคลัง: {stockQty} {unit}
-                              </span>
-                            )}
                           </div>
                         </td>
-                        <td className="p-3">
+                        <td className={tableDensity === 'compact' ? 'p-2' : 'p-3'}>
                           <CategoryBadge itemName={name} customItems={customItems} />
                         </td>
-                        <td className="p-3 text-right font-mono text-slate-600">
+                        <td className={`${tableDensity === 'compact' ? 'p-2' : 'p-3'} text-right font-mono text-slate-600 text-xs sm:text-sm`}>
                           {last} {unit}
                         </td>
-                        <td className="p-3 text-right">
+                        <td className={`${tableDensity === 'compact' ? 'p-2' : 'p-3'} text-right`}>
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               type="button"
@@ -1064,11 +1265,11 @@ export const StaffView: React.FC<StaffViewProps> = ({
                               value={qtyInputs[name] ?? ''}
                               onChange={e => handleQtyChange(name, e.target.value)}
                               placeholder="0"
-                              className="w-20 px-2 py-1 border border-slate-200 rounded-lg text-right font-mono font-semibold focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 disabled:bg-slate-100 shadow-[inset_1px_1px_2px_rgba(163,177,198,0.2)]"
+                              className="w-20 px-2 py-1 border border-slate-200 rounded-lg text-right font-mono font-semibold focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 disabled:bg-slate-100 shadow-[inset_1px_1px_2px_rgba(163,177,198,0.2)] text-xs sm:text-sm"
                             />
                           </div>
                         </td>
-                        <td className="p-3 text-right font-mono">
+                        <td className={`${tableDensity === 'compact' ? 'p-2' : 'p-3'} text-right font-mono text-xs sm:text-sm`}>
                           <div className="flex flex-col items-end gap-0.5">
                             <span className={diffClass}>{diffText}</span>
                             {currentVal !== undefined && currentVal > 0 && spike.isSpike && (
@@ -1094,9 +1295,9 @@ export const StaffView: React.FC<StaffViewProps> = ({
             />
           </div>
 
-          {/* Reason Textarea (รูปที่ 1) */}
+          {/* Reason Textarea */}
           {!isPlanFrozen && (
-            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-2">
+            <div id="staff-survey-reason-card" className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-2">
               <label className="block text-xs font-bold text-slate-800">
                 เหตุผลความจำเป็นในการขอใช้ปีงบประมาณ {fiscalYear}
               </label>
@@ -1110,7 +1311,7 @@ export const StaffView: React.FC<StaffViewProps> = ({
             </div>
           )}
 
-          {/* Submit Button (รูปที่ 1) */}
+          {/* Submit Button */}
           {!isPlanFrozen && (
             <div className="flex justify-end pt-2">
               <button
@@ -1121,6 +1322,47 @@ export const StaffView: React.FC<StaffViewProps> = ({
                 <Send className="w-4 h-4" />
                 ส่งคำขอให้หัวหน้ากลุ่มงาน/ฝ่ายอนุมัติ
               </button>
+            </div>
+          )}
+
+          {/* Sticky Mini-Summary Bar for Active Survey Selection */}
+          {totalSelectedItemsCount > 0 && (
+            <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md text-white border border-slate-700/80 rounded-2xl px-5 py-3 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4 max-w-3xl w-[92%] animate-in slide-in-from-bottom-5">
+              <div className="flex items-center gap-3 w-full sm:w-auto">
+                <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/30 shrink-0">
+                  <ShoppingCart className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-100 flex items-center gap-2">
+                    <span>เลือกแล้ว:</span>
+                    <span className="text-indigo-400 font-mono font-black text-sm bg-indigo-950/80 px-2 py-0.5 rounded border border-indigo-700/50">
+                      {totalSelectedItemsCount}
+                    </span>
+                    <span>รายการ</span>
+                  </div>
+                  <div className="text-[11px] text-slate-300 mt-0.5">
+                    ประมาณการงบประมาณ: <span className="text-emerald-400 font-mono font-bold text-xs sm:text-sm">฿{fmtBaht(totalEstimatedBudget)}</span> บาท
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById('staff-survey-reason-card');
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth' });
+                    } else {
+                      handleSubmit();
+                    }
+                  }}
+                  className="w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>ส่งคำขอ ({totalSelectedItemsCount} รายการ) ↗</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1860,162 +2102,880 @@ export const StaffView: React.FC<StaffViewProps> = ({
                   {/* Row 4: Grid Table Column Titles */}
                   <div className="grid grid-cols-12 items-stretch min-h-[36px] bg-slate-50 font-bold text-slate-800 text-center divide-x divide-slate-200">
                     <div className="col-span-1 bg-slate-100 flex items-center justify-center font-mono text-[10px] text-slate-400 font-bold select-none">4</div>
-                    <div className="col-span-1 py-2 flex items-center justify-center font-bold">ลำดับ</div>
-                    <div className="col-span-6 py-2 px-4 flex items-center justify-start font-bold">รายการ</div>
-                    <div className="col-span-2 py-2 flex items-center justify-center font-bold">หน่วย</div>
-                    <div className="col-span-2 py-2 flex items-center justify-end pr-4 font-bold">จำนวน</div>
+                    <div className="col-span-1 p-2 flex items-center justify-center">ลำดับ</div>
+                    <div className="col-span-6 p-2 text-left flex items-center px-4">รายการ</div>
+                    <div className="col-span-2 p-2 flex items-center justify-center">หน่วยนับ</div>
+                    <div className="col-span-2 p-2 flex items-center justify-center">จำนวน</div>
                   </div>
 
-                  {/* Row 5+: Items Rows */}
-                  {(() => {
-                    const filteredItems = reportSubmittedRequests.filter(r => getItemCategory(r.itemName) === reportFinalActiveSheetCat);
-                    const renderedRows: React.ReactNode[] = [];
-                    
-                    // 1. Render actual data rows if present
-                    filteredItems.forEach((r, idx) => {
-                      renderedRows.push(
-                        <div key={r.id} className="grid grid-cols-12 items-stretch min-h-[34px] divide-x divide-slate-200 hover:bg-slate-50/50 transition-colors bg-white">
-                          <div className="col-span-1 bg-slate-100 flex items-center justify-center font-mono text-[10px] text-slate-400 font-bold select-none">{5 + idx}</div>
-                          <div className="col-span-1 flex items-center justify-center font-mono text-slate-600">{idx + 1}</div>
-                          <div className="col-span-6 flex items-center justify-start px-4 font-semibold text-slate-800">{r.itemName}</div>
-                          <div className="col-span-2 flex items-center justify-center text-slate-600">{r.unit || guessUnit(r.itemName)}</div>
-                          <div className="col-span-2 flex items-center justify-end pr-4 font-mono font-bold text-slate-900 bg-slate-50/30">{r.qtyRequested}</div>
+                  {/* Data Rows for Tab 4 */}
+                  {reportFinalItems.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 text-xs">ไม่มีรายการในหมวดหมู่นี้</div>
+                  ) : (
+                    reportFinalItems.map((r, idx) => (
+                      <div key={r.id} className="grid grid-cols-12 items-stretch min-h-[32px] hover:bg-slate-50 divide-x divide-slate-200">
+                        <div className="col-span-1 bg-slate-100 flex items-center justify-center font-mono text-[10px] text-slate-400 font-bold select-none">
+                          {idx + 5}
                         </div>
-                      );
-                    });
-
-                    // 2. Render warning indicator inside the grid if empty
-                    if (filteredItems.length === 0) {
-                      renderedRows.push(
-                        <div key="empty-alert" className="grid grid-cols-12 items-stretch min-h-[44px] divide-x divide-slate-200 bg-white">
-                          <div className="col-span-1 bg-slate-100 flex items-center justify-center font-mono text-[10px] text-slate-400 font-bold select-none">5</div>
-                          <div className="col-span-11 p-3 text-center text-slate-400 font-semibold flex items-center justify-center gap-1.5 bg-slate-50/20">
-                            <AlertCircle className="w-4 h-4 text-slate-400" />
-                            ไม่มีรายการพัสดุในหมวดนี้ที่ส่งยื่นคำขอ
-                          </div>
+                        <div className="col-span-1 p-2 text-center font-mono text-slate-500">
+                          {idx + 1}
                         </div>
-                      );
-                    }
-
-                    // 3. Render empty grid rows to make the sheet look "full"
-                    const totalGridRowsDesired = 15;
-                    const currentRowsCount = filteredItems.length > 0 ? filteredItems.length : 1;
-                    const emptyRowsCountNeeded = Math.max(totalGridRowsDesired - currentRowsCount, 10);
-                    
-                    const startRowIndex = 5 + currentRowsCount;
-                    for (let i = 0; i < emptyRowsCountNeeded; i++) {
-                      const currentRowIdx = startRowIndex + i;
-                      renderedRows.push(
-                        <div key={`empty-row-${i}`} className="grid grid-cols-12 items-stretch min-h-[34px] divide-x divide-slate-200 bg-white">
-                          <div className="col-span-1 bg-slate-100 flex items-center justify-center font-mono text-[10px] text-slate-400 font-bold select-none">{currentRowIdx}</div>
-                          <div className="col-span-1 flex items-center justify-center"></div>
-                          <div className="col-span-6 flex items-center justify-start px-4"></div>
-                          <div className="col-span-2 flex items-center justify-center"></div>
-                          <div className="col-span-2 flex items-center justify-end pr-4 bg-slate-50/5 text-slate-400"></div>
+                        <div className="col-span-6 p-2 px-4 font-medium text-slate-800 flex items-center">
+                          {r.itemName}
                         </div>
-                      );
-                    }
-
-                    return renderedRows;
-                  })()}
+                        <div className="col-span-2 p-2 text-center text-slate-600 flex items-center justify-center">
+                          {r.unit || guessUnit(r.itemName)}
+                        </div>
+                        <div className="col-span-2 p-2 text-center font-mono font-bold text-indigo-700 flex items-center justify-center">
+                          {r.qtyRequested}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Simulated Sheet Tabs Bar at bottom (Just like Excel) */}
-            <div className="bg-slate-100 border-t border-slate-200 px-3 py-1 flex items-center gap-1 select-none overflow-x-auto no-scrollbar">
-              <div className="text-[10px] font-bold text-slate-400 px-2 font-mono border-r border-slate-300 mr-1 flex items-center gap-1">
-                <FileText className="w-3.5 h-3.5 text-slate-400" />
-                <span>SHEETS</span>
-              </div>
-              
-              <div className="flex items-center gap-1">
-                {reportSubmittedCats.map(catId => {
-                  const label = CATEGORY_LABELS[catId] || catId;
-                  const isActive = reportFinalActiveSheetCat === catId;
-                  
-                  return (
-                    <button
-                      key={catId}
-                      type="button"
-                      onClick={() => setActiveSheetCat(catId)}
-                      className={`px-3 py-1.5 rounded-t-lg text-xs font-bold border-t border-x transition-colors cursor-pointer flex items-center gap-1.5 ${
-                        isActive
-                          ? 'bg-white text-green-700 border-slate-300 font-extrabold shadow-sm relative -bottom-[2px] z-10'
-                          : 'bg-slate-50 text-slate-600 border-transparent hover:bg-slate-200 hover:text-slate-900'
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-green-600' : 'bg-slate-400'}`} />
-                      <span>{label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              
-              <div className="w-6 h-6 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-500 font-bold text-sm cursor-pointer ml-1">
-                +
-              </div>
+            {/* Category Sheet Tab Switcher */}
+            <div className="bg-slate-200/90 border-t border-slate-300 p-2 flex items-center gap-1.5 overflow-x-auto select-none">
+              {reportFinalCategories.map(cat => {
+                const isActive = reportFinalActiveSheetCat === cat;
+                const count = reportSubmittedRequests.filter(r => getItemCategory(r.itemName) === cat).length;
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setReportFinalActiveSheetCat(cat)}
+                    className={`px-3 py-1.5 rounded-t-lg text-xs font-bold flex items-center gap-2 border-t border-x transition-all ${
+                      isActive
+                        ? 'bg-white text-slate-900 border-slate-300 shadow-xs'
+                        : 'bg-slate-300 text-slate-600 hover:bg-slate-100 hover:text-slate-900 border-transparent'
+                    }`}
+                  >
+                    <span>{CATEGORY_LABELS[cat] || cat}</span>
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                      isActive ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-400/40 text-slate-700'
+                    }`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
       )}
 
-      {/* TAB 5: ปรับปรุงแผนงบประมาณรอบ 6 เดือน (MID-YEAR REVISION) */}
+      {/* TAB 5: ปรับปรุงแผนงบประมาณรอบ 6 เดือน */}
       {activeTab === 'revision' && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          {/* Header Banner */}
-          <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-6 text-white shadow-md">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="space-y-1.5">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 text-white text-xs font-bold backdrop-blur-xs">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-                  ระบบยื่นคำขอปรับปรุงแผนงบประมาณรอบ 6 เดือน (Mid-Year Budget Revision)
-                </div>
-                <h2 className="text-xl md:text-2xl font-bold">
-                  ปรับปรุงแผนการจัดหาพัสดุ — ฝ่าย{currentDept.name}
-                </h2>
-                <p className="text-xs md:text-sm text-amber-100 max-w-3xl leading-relaxed">
-                  สำหรับรายการที่ผ่านการอนุมัติแล้ว ท่านสามารถ <strong className="text-white">ขอปรับเพิ่มยอด, ขอลดยอด, ขอยกเลิกรายการเดิม</strong> หรือ <strong className="text-white">ขอเพิ่มรายการใหม่</strong> พร้อมระบุเหตุผลความจำเป็นเพื่อให้ฝ่ายพัสดุและผู้บริหารพิจารณา
-                </p>
+        <div className="space-y-6">
+          {!canRevise ? (
+            <div className="bg-amber-50 border border-amber-200 rounded-3xl p-8 text-center space-y-4 shadow-sm">
+              <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+                <Clock className="w-6 h-6" />
               </div>
-
-              <div className="bg-white/10 backdrop-blur-md border border-white/25 rounded-2xl p-4 text-xs space-y-1 self-start md:self-auto min-w-[220px]">
-                <div className="text-amber-100 font-medium">สถานะสิทธิ์การปรับแผน:</div>
-                {isDeptUnlockedForRevision ? (
-                  <div className="flex items-center gap-1.5 font-bold text-emerald-200 text-sm">
-                    <Unlock className="w-4 h-4 text-emerald-300" />
-                    เปิดให้ปรับแผนได้
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 font-bold text-rose-200 text-sm">
-                    <Lock className="w-4 h-4 text-rose-300" />
-                    ยังไม่เปิดสิทธิ์ (ติดต่อพัสดุ)
-                  </div>
-                )}
-                {currentDeptPerm?.note && (
-                  <div className="text-[11px] text-white/80 pt-1 border-t border-white/10">
-                    หมายเหตุ: {currentDeptPerm.note}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {!isDeptUnlockedForRevision ? (
-            <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center space-y-4 shadow-sm">
-              <div className="w-16 h-16 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mx-auto">
-                <Lock className="w-8 h-8" />
-              </div>
-              <div className="space-y-1 max-w-md mx-auto">
-                <h3 className="font-bold text-slate-800 text-lg">ยังไม่เปิดสิทธิ์ปรับปรุงแผนสำหรับฝ่ายนี้</h3>
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  ขณะนี้ฝ่ายของท่านยังไม่ได้รับสิทธิ์เปิดแก้ไขแผนรอบ 6 เดือน หากมีความจำเป็นต้องปรับปรุงยอดหรือเพิ่มรายการ กรุณาประสานงานแจ้งเจ้าหน้าที่พัสดุเพื่อทำการเปิดสิทธิ์ในระบบ
+              <div className="max-w-md mx-auto space-y-1">
+                <h3 className="font-bold text-slate-900 text-base">ยังไม่เปิดให้ปรับปรุงแผนงบประมาณ หรือยังไม่มีแผนที่ได้รับอนุมัติ</h3>
+                <p className="text-xs text-slate-600">
+                  การปรับปรุงแผนงบประมาณรอบ 6 เดือน จะทำได้เฉพาะเมื่อฝ่ายของท่านได้รับการอนุมัติแผนหลักแล้ว หรือฝ่ายพัสดุได้ทำการเปิดรอบการปรับปรุงแผน
                 </p>
               </div>
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Reason input for full revision package */}
+              {/* Revision Sub-Tabs Navigation Bar */}
+              <div className="flex bg-slate-100 p-1.5 rounded-2xl gap-2 text-xs font-bold w-fit max-w-full overflow-x-auto no-scrollbar shadow-inner border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setRevisionSubTab('approved')}
+                  className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                    revisionSubTab === 'approved'
+                      ? 'bg-white text-indigo-950 shadow-sm font-extrabold border border-indigo-100 ring-1 ring-black/5'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  }`}
+                >
+                  <FileText className="w-4 h-4 text-indigo-600" />
+                  <span>1. รายการเดิมที่ได้รับอนุมัติแล้ว (สามารถปรับเปลี่ยนยอด หรือขอยกเลิก)</span>
+                  <span className="px-2 py-0.5 rounded-full text-[11px] bg-indigo-50 text-indigo-700 font-mono font-bold border border-indigo-100">
+                    {approvedDeptRequests.length} รายการ
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRevisionSubTab('new_items')}
+                  className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 whitespace-nowrap cursor-pointer ${
+                    revisionSubTab === 'new_items'
+                      ? 'bg-emerald-600 text-white shadow-sm font-extrabold ring-1 ring-emerald-700'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                  }`}
+                >
+                  <PlusCircle className={`w-4 h-4 ${revisionSubTab === 'new_items' ? 'text-white' : 'text-emerald-600'}`} />
+                  <span>2. ขอเพิ่มรายการพัสดุใหม่ในแผนปรับปรุง (รายการที่ยังไม่มีในแผนเดิม)</span>
+                  {revisionNewlyAddedList.length > 0 ? (
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-bold ${
+                      revisionSubTab === 'new_items' ? 'bg-emerald-800 text-white' : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    }`}>
+                      +{revisionNewlyAddedList.length} รายการที่เลือก
+                    </span>
+                  ) : (
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-medium ${
+                      revisionSubTab === 'new_items' ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-200/80 text-slate-600'
+                    }`}>
+                      {revisionAvailableItems.length} รายการพร้อมขอ
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Sub-Tab 1: Existing Approved Items */}
+              {revisionSubTab === 'approved' && (
+                <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4 animate-in fade-in duration-150">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm md:text-base flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-indigo-600" />
+                        1. รายการเดิมที่ได้รับอนุมัติแล้ว (สามารถปรับเปลี่ยนยอด หรือขอยกเลิก)
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        กรอกจำนวนใหม่ที่ต้องการปรับ หรือเลือกประเภทการปรับแผนของแต่ละรายการในงวด 6 เดือน
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRevApprovedOnlyModified(prev => !prev)}
+                        className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                          revApprovedOnlyModified
+                            ? 'bg-amber-600 text-white border-amber-700'
+                            : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                        }`}
+                      >
+                        <Filter className="w-3.5 h-3.5" />
+                        <span>ดูเฉพาะที่ขอปรับ/ยกเลิก</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Filter Toolbar for Approved Items */}
+                  <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div className="relative flex-1 max-w-md">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={revApprovedSearch}
+                        onChange={e => setRevApprovedSearch(e.target.value)}
+                        placeholder="ค้นหาชื่อวัสดุ หรือรหัส GPSC ในรายการเดิม..."
+                        className="w-full text-xs pl-8.5 pr-3 py-2 border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium placeholder-slate-400"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                        <span>หมวดหมู่:</span>
+                        <select
+                          value={revApprovedCat}
+                          onChange={e => setRevApprovedCat(e.target.value as CategoryId | 'all')}
+                          className="px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        >
+                          <option value="all">ทุกหมวดหมู่ ({approvedDeptRequests.length})</option>
+                          {CATEGORY_ORDER.map(cat => {
+                            const cCount = approvedDeptRequests.filter(r => getItemCategory(r.itemName) === cat).length;
+                            if (cCount === 0) return null;
+                            return (
+                              <option key={cat} value={cat}>
+                                {CATEGORY_LABELS[cat] || cat} ({cCount})
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {filteredApprovedRequests.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl space-y-2">
+                      <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                        <Search className="w-5 h-5" />
+                      </div>
+                      <div className="text-xs font-bold text-slate-700">ไม่พบรายการที่ตรงกับเงื่อนไขการค้นหา</div>
+                      <p className="text-[11px] text-slate-500">
+                        {approvedDeptRequests.length === 0 
+                          ? 'ฝ่ายนี้ยังไม่มีรายการพัสดุที่ได้รับอนุมัติในแผนเดิม กรุณาสลับไปที่แท็บ "2. ขอเพิ่มรายการพัสดุใหม่ในแผนปรับปรุง"'
+                          : 'ลองล้างคำค้นหาหรือตัวกรองหมวดหมู่เพื่อดูรายการทั้งหมด'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto border border-slate-200 rounded-2xl bg-white shadow-2xs">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                            <th className="p-3 w-10 text-center">ลำดับ</th>
+                            <th className="p-3">รายการวัสดุ / รหัส GPSC</th>
+                            <th className="p-3 w-28">หมวดหมู่</th>
+                            <th className="p-3 text-center w-20">หน่วยนับ</th>
+                            <th className="p-3 text-right w-24">ยอดเดิมที่อนุมัติ</th>
+                            <th className="p-3 text-center w-36">การดำเนินการ</th>
+                            <th className="p-3 text-right w-28">ยอดที่ขอใหม่</th>
+                            <th className="p-3 text-center w-24">ผลต่าง (+/-)</th>
+                            <th className="p-3">เหตุผลการปรับของรายการนี้</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {filteredApprovedRequests.map((r, idx) => {
+                            const baseQty = r.revisionBaseQty !== undefined ? r.revisionBaseQty : (r.qtyOriginal ?? r.qtyRequested);
+                            const inputState = revisionInputs[r.itemName] ?? {
+                              qty: r.qtyRequested,
+                              type: r.revisionType ?? 'modify',
+                              reason: r.revisionReason ?? ''
+                            };
+                            const newQty = inputState.type === 'cancel' ? 0 : inputState.qty;
+                            const diff = newQty - baseQty;
+                            const gpsc = getItemGpscCode(r.itemName);
+
+                            return (
+                              <tr 
+                                key={r.id} 
+                                className={`hover:bg-slate-50/80 transition-colors ${
+                                  inputState.type === 'cancel' 
+                                    ? 'bg-rose-50/40' 
+                                    : diff !== 0 
+                                    ? 'bg-amber-50/40' 
+                                    : ''
+                                }`}
+                              >
+                                <td className="p-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                                <td className="p-3">
+                                  <div className="font-bold text-slate-900">{r.itemName}</div>
+                                  <div className="text-[11px] text-slate-400 font-mono">GPSC: {gpsc}</div>
+                                </td>
+                                <td className="p-3">
+                                  <CategoryBadge itemName={r.itemName} customItems={customItems} />
+                                </td>
+                                <td className="p-3 text-center text-slate-600">{r.unit || guessUnit(r.itemName)}</td>
+                                <td className="p-3 text-right font-mono font-bold text-slate-600">
+                                  {baseQty}
+                                </td>
+                                <td className="p-3 text-center">
+                                  <select
+                                    value={inputState.type}
+                                    onChange={e => {
+                                      const val = e.target.value as 'modify' | 'cancel';
+                                      setRevisionInputs(prev => ({
+                                        ...prev,
+                                        [r.itemName]: {
+                                          ...inputState,
+                                          type: val,
+                                          qty: val === 'cancel' ? 0 : inputState.qty
+                                        }
+                                      }));
+                                    }}
+                                    className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700"
+                                  >
+                                    <option value="modify">ปรับเปลี่ยนยอด</option>
+                                    <option value="cancel">ขอยกเลิกรายการ</option>
+                                  </select>
+                                </td>
+                                <td className="p-3 text-right">
+                                  {inputState.type === 'cancel' ? (
+                                    <span className="text-rose-600 font-bold font-mono">0 (ยกเลิก)</span>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={inputState.qty}
+                                      onChange={e => {
+                                        const num = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                        setRevisionInputs(prev => ({
+                                          ...prev,
+                                          [r.itemName]: {
+                                            ...inputState,
+                                            qty: num
+                                          }
+                                        }));
+                                      }}
+                                      className="w-20 px-2 py-1 bg-white border border-slate-200 rounded-lg text-right font-mono font-bold text-xs focus:ring-1 focus:ring-amber-500"
+                                    />
+                                  )}
+                                </td>
+                                <td className="p-3 text-center font-mono font-bold">
+                                  {diff > 0 ? (
+                                    <span className="text-emerald-600">+{diff}</span>
+                                  ) : diff < 0 ? (
+                                    <span className="text-rose-600">{diff}</span>
+                                  ) : (
+                                    <span className="text-slate-400">0</span>
+                                  )}
+                                </td>
+                                <td className="p-3">
+                                  <input
+                                    type="text"
+                                    placeholder="ระบุเหตุผล เช่น ยอดเดิมไม่พอ / งานเพิ่ม..."
+                                    value={inputState.reason}
+                                    onChange={e => {
+                                      setRevisionInputs(prev => ({
+                                        ...prev,
+                                        [r.itemName]: {
+                                          ...inputState,
+                                          reason: e.target.value
+                                        }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white"
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sub-Tab 2: Catalog Survey Sheet for Newly Added Items */}
+              {revisionSubTab === 'new_items' && (
+                <div className="space-y-5 animate-in fade-in duration-150">
+                  {/* Inline Custom Item Add Bar */}
+                  <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs shadow-sm">
+                    <div className="flex items-center gap-2 font-bold text-emerald-950">
+                      <PlusCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>เพิ่มรายการวัสดุใหม่นอกแคตตาล็อกกลาง (กรณีไม่มีในระบบ):</span>
+                    </div>
+                    <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+                      <input
+                        type="text"
+                        placeholder="ระบุชื่อพัสดุใหม่..."
+                        value={revCustomName}
+                        onChange={e => setRevCustomName(e.target.value)}
+                        className="px-3 py-1.5 text-xs bg-white border border-emerald-300 rounded-xl flex-1 md:w-48 font-medium focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <select
+                        value={revCustomCat}
+                        onChange={e => setRevCustomCat(e.target.value as CategoryId)}
+                        className="px-3 py-1.5 text-xs bg-white border border-emerald-300 rounded-xl font-medium"
+                      >
+                        {CATEGORY_ORDER.map(cat => (
+                          <option key={cat} value={cat}>{CATEGORY_LABELS[cat] || cat}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="หน่วยนับ"
+                        value={revCustomUnit}
+                        onChange={e => setRevCustomUnit(e.target.value)}
+                        className="w-20 px-3 py-1.5 text-xs bg-white border border-emerald-300 rounded-xl text-center font-medium"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!revCustomName.trim()) {
+                            onToastAlert('กรุณาระบุชื่อพัสดุใหม่', 'error');
+                            return;
+                          }
+                          const trimName = revCustomName.trim();
+                          if (approvedItemNames.has(trimName)) {
+                            onToastAlert(`รายการ "${trimName}" มีอยู่ในแผนเดิมแล้ว (ดูในแท็บที่ 1)`, 'error');
+                            return;
+                          }
+                          // Add to custom items list
+                          setRevisionCustomItems(prev => [...prev, { name: trimName, category: revCustomCat, unit: revCustomUnit.trim() || 'ชิ้น' }]);
+                          // Pre-fill quantity
+                          setRevisionNewQtyInputs(prev => ({ ...prev, [trimName]: 10 }));
+                          setRevisionNewReasons(prev => ({ ...prev, [trimName]: 'ขอเพิ่มรายการใหม่เนื่องจากมีความจำเป็นต้องใช้เพิ่มเติมในรอบ 6 เดือน' }));
+                          setRevCustomName('');
+                          onToastAlert(`เพิ่มรายการ "${trimName}" เข้าสู่แบบสำรวจและตั้งจำนวนขอเพิ่ม 10 เรียบร้อย`, 'success');
+                        }}
+                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold cursor-pointer transition-all shadow-2xs active:scale-95 whitespace-nowrap"
+                      >
+                        + เพิ่มเข้าแบบสำรวจ
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Catalog Survey Sheet Container (Identical to Survey UI) */}
+                  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-5">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-extrabold text-[11px] border border-emerald-300">
+                            หมวดสำรวจพัสดุใหม่
+                          </span>
+                          <h3 className="font-bold text-slate-900 text-sm md:text-base flex items-center gap-2">
+                            <PlusCircle className="w-4 h-4 text-emerald-600" />
+                            2. แบบสำรวจขอเพิ่มรายการพัสดุใหม่ในแผนปรับปรุง ({revisionAvailableItems.length} รายการ)
+                          </h3>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1">
+                          เลือกหมวดหมู่วัสดุและใส่จำนวนที่ต้องการขอเพิ่มได้โดยตรงเหมือนแบบสำรวจปกติ (ระบบแสดงเฉพาะรายการที่ยังไม่ได้บรรจุในแผนเดิม)
+                        </p>
+                      </div>
+
+                      {/* Summary of items added so far & Quick Filter Toggle */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRevisionSurveyOnlySelected(prev => !prev);
+                            setRevisionSurveyPage(1);
+                          }}
+                          className={`px-3 py-1.5 rounded-xl font-bold text-xs border transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+                            revisionSurveyOnlySelected
+                              ? 'bg-emerald-600 text-white border-emerald-700'
+                              : revisionNewlyAddedList.length > 0
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                              : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>ดูเฉพาะที่เลือกขอเพิ่ม ({revisionNewlyAddedList.length})</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Category Filter Tabs */}
+                    <div className="space-y-2">
+                      <div className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                        <span>เลือกหมวดหมู่พัสดุ:</span>
+                        <span className="text-[11px] font-normal text-slate-500">
+                          กำลังแสดง: <strong className="text-indigo-600">{revisionSurveyCat === 'all' ? 'ทุกหมวดหมู่' : (CATEGORY_LABELS[revisionSurveyCat] || revisionSurveyCat)}</strong>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-thin">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRevisionSurveyCat('all');
+                            setRevisionSurveyPage(1);
+                          }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                            revisionSurveyCat === 'all'
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                          }`}
+                        >
+                          <span>ทั้งหมด</span>
+                          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                            revisionSurveyCat === 'all' ? 'bg-indigo-700 text-white' : 'bg-slate-200 text-slate-700'
+                          }`}>
+                            {ALL_ITEMS.filter(name => !approvedItemNames.has(name)).length}
+                          </span>
+                        </button>
+
+                        {CATEGORY_ORDER.map(cat => {
+                          const catItems = (CATALOG[cat] || []).filter(name => !approvedItemNames.has(name));
+                          const selectedCountInCat = catItems.filter(name => (revisionNewQtyInputs[name] || 0) > 0).length;
+                          const isCatActive = revisionSurveyCat === cat;
+
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => {
+                                setRevisionSurveyCat(cat);
+                                setRevisionSurveyPage(1);
+                              }}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer flex items-center gap-1.5 ${
+                                isCatActive
+                                  ? 'bg-indigo-600 text-white shadow-xs'
+                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                              }`}
+                            >
+                              <span>{CATEGORY_LABELS[cat] || cat}</span>
+                              <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                                isCatActive ? 'bg-indigo-700 text-white' : 'bg-slate-200 text-slate-700'
+                              }`}>
+                                {catItems.length}
+                              </span>
+                              {selectedCountInCat > 0 && (
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title={`เลือกแล้ว ${selectedCountInCat} รายการ`} />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Toolbar: Search & Pagination Size */}
+                    <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                      <div className="relative flex-1 max-w-md">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+                        <input
+                          type="text"
+                          value={revisionSurveySearch}
+                          onChange={e => {
+                            setRevisionSurveySearch(e.target.value);
+                            setRevisionSurveyPage(1);
+                          }}
+                          placeholder="ค้นหาชื่อวัสดุ หรือรหัส GPSC ที่ต้องการขอเพิ่ม..."
+                          className="w-full text-xs pl-8.5 pr-3 py-2 border border-slate-300 rounded-xl bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium placeholder-slate-400"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                          <span>แสดงต่อหน้า:</span>
+                          <select
+                            value={revisionSurveyPageSize}
+                            onChange={e => {
+                              const val = e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10);
+                              setRevisionSurveyPageSize(val);
+                              setRevisionSurveyPage(1);
+                            }}
+                            className="px-2 py-1 bg-white border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          >
+                            <option value={10}>10 รายการ</option>
+                            <option value={25}>25 รายการ</option>
+                            <option value={50}>50 รายการ</option>
+                            <option value="all">แสดงทั้งหมด</option>
+                          </select>
+                        </div>
+
+                        {/* Quick clear all new selections */}
+                        {revisionNewlyAddedList.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRevisionNewQtyInputs({});
+                              setRevisionNewReasons({});
+                              onToastAlert('ล้างรายการขอเพิ่มใหม่ทั้งหมดแล้ว', 'info');
+                            }}
+                            className="px-2.5 py-1 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg font-semibold transition-colors cursor-pointer"
+                          >
+                            ล้างรายการที่เลือก ({revisionNewlyAddedList.length})
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Quick Fill Toolbar for Revision New Items */}
+                    <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                      <div className="flex items-center gap-1.5 font-bold text-indigo-900">
+                        <Zap className="w-4 h-4 text-amber-500 shrink-0" />
+                        <span>ตัวช่วยกรอกด่วน (Quick Fill สำหรับรายการขอเพิ่มใหม่):</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleRevisionQuickFill('lastYear100')}
+                          className="px-2.5 py-1 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-lg font-bold transition-all shadow-2xs cursor-pointer"
+                        >
+                          ⚡ ดึงยอดปี 68 (100%)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRevisionQuickFill('lastYearPlus5')}
+                          className="px-2.5 py-1 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-lg font-bold transition-all shadow-2xs cursor-pointer"
+                        >
+                          ⚡ ปี 68 + 5%
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRevisionQuickFill('lastYearPlus10')}
+                          className="px-2.5 py-1 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-lg font-bold transition-all shadow-2xs cursor-pointer"
+                        >
+                          ⚡ ปี 68 + 10%
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRevisionQuickFill('avg3Years')}
+                          className="px-2.5 py-1 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-lg font-bold transition-all shadow-2xs cursor-pointer"
+                        >
+                          ⚡ เฉลี่ย 3 ปีย้อนหลัง
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRevisionQuickFill('clear')}
+                          className="px-2 py-1 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        >
+                          ล้างค่า
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Catalog Survey Table */}
+                    {revisionAvailableItems.length === 0 ? (
+                      <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl space-y-2">
+                        <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                          <Search className="w-5 h-5" />
+                        </div>
+                        <div className="text-xs font-bold text-slate-700">ไม่พบรายการพัสดุที่ตรงกับเงื่อนไข</div>
+                        <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                          ลองเปลี่ยนคำค้นหา หรือคลิกปุ่ม &quot;ทั้งหมด&quot; เพื่อดูรายการทั้งหมดในแคตตาล็อก
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto border border-slate-200 rounded-2xl bg-white shadow-2xs">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-100/90 text-slate-700 font-bold border-b border-slate-200 select-none">
+                              <th className="p-3 w-10 text-center">ลำดับ</th>
+                              <th 
+                                className="p-3 cursor-pointer hover:bg-slate-200/70 transition-colors"
+                                onClick={() => handleRevisionHeaderSort('name')}
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <span>รายการพัสดุ / รหัส GPSC</span>
+                                  <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                                </div>
+                              </th>
+                              <th 
+                                className="p-3 w-32 cursor-pointer hover:bg-slate-200/70 transition-colors"
+                                onClick={() => handleRevisionHeaderSort('category')}
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <span>ประเภทวัสดุ</span>
+                                  <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                                </div>
+                              </th>
+                              <th 
+                                className="p-3 text-right w-28 cursor-pointer hover:bg-slate-200/70 transition-colors"
+                                onClick={() => handleRevisionHeaderSort('lastYear')}
+                              >
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <span>ปี 2568 (ใช้จริง)</span>
+                                  <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                                </div>
+                              </th>
+                              <th 
+                                className="p-3 text-right w-36 cursor-pointer hover:bg-slate-200/70 transition-colors"
+                                onClick={() => handleRevisionHeaderSort('requested')}
+                              >
+                                <div className="flex items-center justify-end gap-1.5 text-emerald-800">
+                                  <span>ขอเพิ่มรอบ 6 เดือน</span>
+                                  <ArrowUpDown className="w-3 h-3 text-emerald-600" />
+                                </div>
+                              </th>
+                              <th 
+                                className="p-3 text-center w-28 cursor-pointer hover:bg-slate-200/70 transition-colors"
+                                onClick={() => handleRevisionHeaderSort('diff')}
+                              >
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <span>ผลต่าง</span>
+                                  <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                                </div>
+                              </th>
+                              <th className="p-3">เหตุผลความจำเป็นในการขอเพิ่ม</th>
+                              <th className="p-3 text-center w-28">สถานะ</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {revisionPagedItems.map((name, idx) => {
+                              const hist = historyFor(name);
+                              const lastYearVal = hist[2568] || 0;
+                              const unit = guessUnit(name);
+                              const gpsc = getItemGpscCode(name);
+                              const qtyVal = revisionNewQtyInputs[name] || 0;
+                              const reasonVal = revisionNewReasons[name] || '';
+                              const isSelected = qtyVal > 0;
+                              const diff = isSelected ? qtyVal - lastYearVal : 0;
+                              const spike = isSelected ? calculateSpike(lastYearVal, qtyVal) : { isSpike: false, percentIncrease: 0, labelTh: 'ปกติ', badgeColor: 'bg-slate-100 text-slate-700', level: 'normal' as const };
+                              const itemIndex = revisionSurveyPageSize === 'all' 
+                                ? idx + 1 
+                                : (revisionSurveyPage - 1) * (revisionSurveyPageSize as number) + idx + 1;
+
+                              return (
+                                <tr
+                                  key={name}
+                                  className={`transition-colors ${
+                                    isSelected
+                                      ? 'bg-emerald-50/50 hover:bg-emerald-50/80'
+                                      : 'hover:bg-slate-50/80'
+                                  }`}
+                                >
+                                  <td className="p-3 text-center font-mono text-slate-500 font-semibold">{itemIndex}</td>
+                                  <td className="p-3">
+                                    <div className="font-bold text-slate-900 text-xs sm:text-sm">{name}</div>
+                                    <div className="flex items-center gap-1.5 mt-0.5 text-[11px]">
+                                      <span className="font-mono text-indigo-700 font-semibold bg-indigo-50 border border-indigo-100 px-1.5 py-0.2 rounded">
+                                        GPSC: {gpsc}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="p-3">
+                                    <CategoryBadge itemName={name} customItems={customItems} />
+                                  </td>
+                                  <td className="p-3 text-right font-mono text-slate-600 font-medium">
+                                    {lastYearVal > 0 ? (
+                                      <div>
+                                        <span className="font-bold text-slate-900">{lastYearVal}</span>{' '}
+                                        <span className="text-[11px] text-slate-500">{unit}</span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400">—</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-right">
+                                    <div className="flex items-center justify-end gap-1">
+                                      {lastYearVal > 0 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setRevisionNewQtyInputs(prev => ({ ...prev, [name]: lastYearVal }));
+                                            if (!revisionNewReasons[name]) {
+                                              setRevisionNewReasons(prev => ({ ...prev, [name]: `ขอเพิ่มตามยอดใช้จริงปี 2568 (${lastYearVal} ${unit})` }));
+                                            }
+                                          }}
+                                          title={`ดึงยอดปี 68 (${lastYearVal} ${unit})`}
+                                          className="px-1.5 py-1 text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded cursor-pointer"
+                                        >
+                                          68
+                                        </button>
+                                      )}
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        placeholder="0"
+                                        value={qtyVal === 0 ? '' : qtyVal}
+                                        onChange={e => {
+                                          const num = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                          setRevisionNewQtyInputs(prev => ({ ...prev, [name]: num }));
+                                          if (num > 0 && !revisionNewReasons[name]) {
+                                            setRevisionNewReasons(prev => ({ ...prev, [name]: 'ขอเพิ่มรายการใหม่เนื่องจากมีความจำเป็นต้องใช้เพิ่มเติมในรอบ 6 เดือน' }));
+                                          }
+                                        }}
+                                        className={`w-20 px-2 py-1 text-right font-mono font-bold text-xs rounded-lg border focus:outline-none focus:ring-2 ${
+                                          isSelected
+                                            ? 'bg-white border-emerald-500 text-emerald-950 ring-1 ring-emerald-400'
+                                            : 'bg-slate-50 border-slate-200 text-slate-700 focus:bg-white focus:border-indigo-500'
+                                        }`}
+                                      />
+                                    </div>
+                                  </td>
+                                  <td className="p-3 text-center font-mono font-bold">
+                                    {isSelected ? (
+                                      <div className="flex flex-col items-center">
+                                        <span className={diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-rose-600' : 'text-slate-400'}>
+                                          {diff > 0 ? `+${diff}` : diff}
+                                        </span>
+                                        {spike.isSpike && (
+                                          <span className="text-[9px] text-rose-600 bg-rose-50 px-1 rounded border border-rose-200 leading-tight mt-0.5">
+                                            +{spike.percentIncrease}%
+                                          </span>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-300">—</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3">
+                                    {isSelected ? (
+                                      <input
+                                        type="text"
+                                        value={reasonVal}
+                                        onChange={e => {
+                                          const text = e.target.value;
+                                          setRevisionNewReasons(prev => ({ ...prev, [name]: text }));
+                                        }}
+                                        placeholder="ระบุเหตุผลความจำเป็นในการขอเพิ่ม..."
+                                        className="w-full px-2.5 py-1 text-xs bg-white border border-emerald-300 rounded-lg focus:border-emerald-500 focus:outline-none"
+                                      />
+                                    ) : (
+                                      <span className="text-[11px] text-slate-400 italic">
+                                        ใส่จำนวนเพื่อเปิดระบุเหตุผล
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-center">
+                                    {isSelected ? (
+                                      <div className="flex items-center justify-center gap-1.5">
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                          +{qtyVal} {unit}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setRevisionNewQtyInputs(prev => {
+                                              const next = { ...prev };
+                                              delete next[name];
+                                              return next;
+                                            });
+                                            setRevisionNewReasons(prev => {
+                                              const next = { ...prev };
+                                              delete next[name];
+                                              return next;
+                                            });
+                                          }}
+                                          title="ล้างยอดรายการนี้"
+                                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded cursor-pointer transition-colors"
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-300 text-xs">—</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    {/* Pagination Controls */}
+                    {revisionSurveyPageSize !== 'all' && revisionAvailableItems.length > (revisionSurveyPageSize as number) && (
+                      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-slate-600">
+                        <div>
+                          แสดงรายการที่ {((revisionSurveyPage - 1) * (revisionSurveyPageSize as number)) + 1} ถึง{' '}
+                          {Math.min(revisionSurveyPage * (revisionSurveyPageSize as number), revisionAvailableItems.length)} จากทั้งหมด{' '}
+                          {revisionAvailableItems.length} รายการ
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setRevisionSurveyPage(prev => Math.max(1, prev - 1))}
+                            disabled={revisionSurveyPage === 1}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+                          >
+                            ก่อนหน้า
+                          </button>
+                          {Array.from({ length: Math.ceil(revisionAvailableItems.length / (revisionSurveyPageSize as number)) }).map((_, pIdx) => {
+                            const pageNum = pIdx + 1;
+                            if (
+                              pageNum === 1 ||
+                              pageNum === Math.ceil(revisionAvailableItems.length / (revisionSurveyPageSize as number)) ||
+                              (pageNum >= revisionSurveyPage - 1 && pageNum <= revisionSurveyPage + 1)
+                            ) {
+                              return (
+                                <button
+                                  key={pageNum}
+                                  type="button"
+                                  onClick={() => setRevisionSurveyPage(pageNum)}
+                                  className={`w-8 h-8 rounded-lg font-bold text-xs transition-colors ${
+                                    revisionSurveyPage === pageNum
+                                      ? 'bg-indigo-600 text-white'
+                                      : 'bg-white border border-slate-200 hover:bg-slate-50 text-slate-700'
+                                  }`}
+                                >
+                                  {pageNum}
+                                </button>
+                              );
+                            }
+                            if (pageNum === revisionSurveyPage - 2 || pageNum === revisionSurveyPage + 2) {
+                              return <span key={pageNum} className="px-1 text-slate-400">...</span>;
+                            }
+                            return null;
+                          })}
+                          <button
+                            type="button"
+                            onClick={() => setRevisionSurveyPage(prev => Math.min(Math.ceil(revisionAvailableItems.length / (revisionSurveyPageSize as number)), prev + 1))}
+                            disabled={revisionSurveyPage === Math.ceil(revisionAvailableItems.length / (revisionSurveyPageSize as number))}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+                          >
+                            ถัดไป
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Shared Bottom Section: Overall Revision Reason & Submission Panel */}
               <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-2">
                 <label className="block text-xs font-bold text-slate-700">
                   วัตถุประสงค์ / เหตุผลความจำเป็นในการปรับปรุงแผนภาพรวมของฝ่าย:
@@ -2029,177 +2989,104 @@ export const StaffView: React.FC<StaffViewProps> = ({
                 />
               </div>
 
-              {/* Table of Approved Items Available for Modification */}
-              <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-sm md:text-base flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-indigo-600" />
-                      1. รายการเดิมที่ได้รับอนุมัติแล้ว (สามารถปรับเปลี่ยนยอด หรือขอยกเลิก)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      กรอกจำนวนใหม่ที่ต้องการปรับ หรือเลือกประเภทการปรับแผนของแต่ละรายการ
-                    </p>
+              {/* Summary Stats Box for Revision Submission */}
+              {(() => {
+                const approvedItems = approvedDeptRequests;
+                let modifiedCount = 0;
+                let cancelledCount = 0;
+                approvedItems.forEach(r => {
+                  const input = revisionInputs[r.itemName];
+                  if (input?.type === 'cancel') {
+                    cancelledCount++;
+                  } else if (input && input.qty !== (r.revisionBaseQty ?? r.qtyOriginal ?? r.qtyRequested)) {
+                    modifiedCount++;
+                  }
+                });
+                const addedCount = revisionNewlyAddedList.length;
+                const totalActionItems = approvedItems.length + addedCount;
+
+                return (
+                  <div className="bg-slate-900 text-white rounded-3xl p-5 shadow-lg border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div className="flex flex-wrap items-center gap-4 text-xs">
+                      <div className="font-bold text-amber-300 text-sm">
+                        📊 สรุปรายการในแผนปรับปรุง:
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1.5 rounded-xl">
+                        <span className="text-slate-300">รายการเดิมขอปรับยอด:</span>
+                        <strong className="text-amber-400 font-mono">{modifiedCount}</strong>
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1.5 rounded-xl">
+                        <span className="text-slate-300">รายการเดิมขอยกเลิก:</span>
+                        <strong className="text-rose-400 font-mono">{cancelledCount}</strong>
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-emerald-950/80 border border-emerald-600/40 px-3 py-1.5 rounded-xl">
+                        <span className="text-emerald-300">รายการใหม่ขอเพิ่ม:</span>
+                        <strong className="text-emerald-400 font-mono">+{addedCount}</strong>
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-white/20 px-3 py-1.5 rounded-xl font-bold">
+                        <span className="text-white">รวมเสนอทั้งสิ้น:</span>
+                        <strong className="text-cyan-300 font-mono text-sm">{totalActionItems}</strong>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 w-full md:w-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const approvedPayload = approvedItems.map(r => {
+                            const baseQty = r.revisionBaseQty !== undefined ? r.revisionBaseQty : (r.qtyOriginal ?? r.qtyRequested);
+                            const inputState = revisionInputs[r.itemName] ?? {
+                              qty: r.qtyRequested,
+                              type: r.revisionType ?? 'modify',
+                              reason: r.revisionReason ?? ''
+                            };
+                            return {
+                              id: r.id,
+                              itemName: r.itemName,
+                              unit: r.unit,
+                              qtyRequested: inputState.type === 'cancel' ? 0 : inputState.qty,
+                              revisionType: inputState.type,
+                              revisionBaseQty: baseQty,
+                              revisionReason: inputState.reason
+                            };
+                          });
+
+                          const newItemsPayload = revisionNewlyAddedList.map(item => ({
+                            itemName: item.itemName,
+                            unit: item.unit,
+                            qtyRequested: item.qty,
+                            revisionType: 'add' as const,
+                            revisionBaseQty: 0,
+                            revisionReason: item.reason
+                          }));
+
+                          const combinedPayload = [...approvedPayload, ...newItemsPayload];
+
+                          onRequestConfirm({
+                            title: 'ยืนยันการส่งคำขอปรับปรุงแผนงบประมาณรอบ 6 เดือน',
+                            message: `คุณต้องการส่งคำขอปรับปรุงแผนของ "${currentDept.name}" จำนวนรวม ${combinedPayload.length} รายการ (รายการเดิม ${approvedPayload.length} รายการ + รายการใหม่ ${newItemsPayload.length} รายการ) ไปยังฝ่ายพัสดุและผู้บริหารเพื่อพิจารณาหรือไม่?`,
+                            confirmText: 'ส่งคำขอปรับแผน',
+                            variant: 'primary',
+                            onConfirm: () => {
+                              if (onSubmitRevisionPlan) {
+                                onSubmitRevisionPlan(selectedDeptId, combinedPayload, overallRevisionReason);
+                                onToastAlert('ส่งคำขอปรับปรุงแผนงบประมาณ (รวมรายการใหม่) เรียบร้อยแล้ว!', 'success');
+                                setRevisionNewQtyInputs({});
+                                setRevisionNewReasons({});
+                                setActiveTab('submitted');
+                              }
+                            }
+                          });
+                        }}
+                        className="w-full md:w-auto px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-2xl font-bold text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
+                      >
+                        <Send className="w-4 h-4" />
+                        ส่งคำขอปรับปรุงแผนงบประมาณรอบ 6 เดือน
+                      </button>
+                    </div>
                   </div>
-                </div>
-
-                <div className="overflow-x-auto border border-slate-200 rounded-2xl">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
-                        <th className="p-3 w-10 text-center">ลำดับ</th>
-                        <th className="p-3">รายการวัสดุ</th>
-                        <th className="p-3 w-28">หมวดหมู่</th>
-                        <th className="p-3 text-center w-20">หน่วยนับ</th>
-                        <th className="p-3 text-right w-24">ยอดเดิมที่อนุมัติ</th>
-                        <th className="p-3 text-center w-36">การดำเนินการ</th>
-                        <th className="p-3 text-right w-28">ยอดที่ขอใหม่</th>
-                        <th className="p-3 text-center w-24">ผลต่าง (+/-)</th>
-                        <th className="p-3">เหตุผลการปรับของรายการนี้</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {requests
-                        .filter(r => r.deptId === selectedDeptId && (r.status === 'approved' || r.isApproved || r.isRevisionItem))
-                        .map((r, idx) => {
-                          const baseQty = r.revisionBaseQty !== undefined ? r.revisionBaseQty : (r.qtyOriginal ?? r.qtyRequested);
-                          const inputState = revisionInputs[r.itemName] ?? {
-                            qty: r.qtyRequested,
-                            type: r.revisionType ?? 'modify',
-                            reason: r.revisionReason ?? ''
-                          };
-                          const newQty = inputState.type === 'cancel' ? 0 : inputState.qty;
-                          const diff = newQty - baseQty;
-
-                          return (
-                            <tr key={r.id} className="hover:bg-slate-50/70">
-                              <td className="p-3 text-center font-mono text-slate-400">{idx + 1}</td>
-                              <td className="p-3 font-bold text-slate-900">
-                                {r.itemName}
-                              </td>
-                              <td className="p-3 text-slate-500">{CATEGORY_LABELS[getItemCategory(r.itemName)]}</td>
-                              <td className="p-3 text-center text-slate-600">{r.unit || guessUnit(r.itemName)}</td>
-                              <td className="p-3 text-right font-mono font-bold text-slate-600">
-                                {baseQty}
-                              </td>
-                              <td className="p-3 text-center">
-                                <select
-                                  value={inputState.type}
-                                  onChange={e => {
-                                    const val = e.target.value as 'modify' | 'cancel';
-                                    setRevisionInputs(prev => ({
-                                      ...prev,
-                                      [r.itemName]: {
-                                        ...inputState,
-                                        type: val,
-                                        qty: val === 'cancel' ? 0 : inputState.qty
-                                      }
-                                    }));
-                                  }}
-                                  className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700"
-                                >
-                                  <option value="modify">ปรับเปลี่ยนยอด</option>
-                                  <option value="cancel">ขอยกเลิกรายการ</option>
-                                </select>
-                              </td>
-                              <td className="p-3 text-right">
-                                {inputState.type === 'cancel' ? (
-                                  <span className="text-rose-600 font-bold font-mono">0 (ยกเลิก)</span>
-                                ) : (
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    value={inputState.qty}
-                                    onChange={e => {
-                                      const num = Math.max(0, parseInt(e.target.value, 10) || 0);
-                                      setRevisionInputs(prev => ({
-                                        ...prev,
-                                        [r.itemName]: {
-                                          ...inputState,
-                                          qty: num
-                                        }
-                                      }));
-                                    }}
-                                    className="w-20 px-2 py-1 bg-white border border-slate-200 rounded-lg text-right font-mono font-bold text-xs focus:ring-1 focus:ring-amber-500"
-                                  />
-                                )}
-                              </td>
-                              <td className="p-3 text-center font-mono font-bold">
-                                {diff > 0 ? (
-                                  <span className="text-emerald-600">+{diff}</span>
-                                ) : diff < 0 ? (
-                                  <span className="text-rose-600">{diff}</span>
-                                ) : (
-                                  <span className="text-slate-400">0</span>
-                                )}
-                              </td>
-                              <td className="p-3">
-                                <input
-                                  type="text"
-                                  placeholder="ระบุเหตุผล เช่น ยอดเดิมไม่พอ / งานเพิ่ม..."
-                                  value={inputState.reason}
-                                  onChange={e => {
-                                    setRevisionInputs(prev => ({
-                                      ...prev,
-                                      [r.itemName]: {
-                                        ...inputState,
-                                        reason: e.target.value
-                                      }
-                                    }));
-                                  }}
-                                  className="w-full px-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:bg-white"
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Submit Revision Plan Button */}
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const approvedItems = requests.filter(r => r.deptId === selectedDeptId && (r.status === 'approved' || r.isApproved || r.isRevisionItem));
-                    const itemsPayload = approvedItems.map(r => {
-                      const baseQty = r.revisionBaseQty !== undefined ? r.revisionBaseQty : (r.qtyOriginal ?? r.qtyRequested);
-                      const inputState = revisionInputs[r.itemName] ?? {
-                        qty: r.qtyRequested,
-                        type: r.revisionType ?? 'modify',
-                        reason: r.revisionReason ?? ''
-                      };
-                      return {
-                        itemName: r.itemName,
-                        qtyRequested: inputState.type === 'cancel' ? 0 : inputState.qty,
-                        revisionType: inputState.type,
-                        revisionBaseQty: baseQty,
-                        revisionReason: inputState.reason
-                      };
-                    });
-
-                    onRequestConfirm({
-                      title: 'ยืนยันการส่งคำขอปรับปรุงแผนงบประมาณรอบ 6 เดือน',
-                      message: `คุณต้องการส่งคำขอปรับปรุงแผนของ "${currentDept.name}" จำนวน ${itemsPayload.length} รายการ ไปยังฝ่ายพัสดุเพื่อพิจารณาหรือไม่?`,
-                      confirmText: 'ส่งคำขอปรับแผน',
-                      variant: 'primary',
-                      onConfirm: () => {
-                        if (onSubmitRevisionPlan) {
-                          onSubmitRevisionPlan(selectedDeptId, itemsPayload, overallRevisionReason);
-                          onToastAlert('ส่งคำขอปรับปรุงแผนงบประมาณเรียบร้อยแล้ว!', 'success');
-                          setActiveTab('submitted');
-                        }
-                      }
-                    });
-                  }}
-                  className="px-6 py-3 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white rounded-2xl font-bold text-sm shadow-md flex items-center gap-2 cursor-pointer active:scale-95 transition-all"
-                >
-                  <Send className="w-4 h-4" />
-                  ส่งคำขอปรับปรุงแผนงบประมาณรอบ 6 เดือน
-                </button>
-              </div>
+                );
+              })()}
             </div>
           )}
         </div>

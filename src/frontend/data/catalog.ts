@@ -65,24 +65,89 @@ export const COMPUTER_ITEMS = [
   "หมึกเครื่องพิมพ์ OKI รุ่น MC 363 (BK)","หมึกเครื่องพิมพ์ OKI รุ่น MC 363 (Y)"
 ];
 
+export const MEDICAL_ITEMS = [
+  "สำลีก้อนสเตอร์ไรด์", "ผ้าก๊อซพับสเตอร์ไรด์ 2x2", "ผ้าก๊อซพับสเตอร์ไรด์ 3x3", "ผ้าก๊อซพับสเตอร์ไรด์ 4x4",
+  "ผ้าพันแผล Conforming 2\"", "ผ้าพันแผล Conforming 3\"", "ผ้าพันแผล Conforming 4\"", "พลาสเตอร์ปิดแผลใสกันน้ำ",
+  "เข็มฉีดยาเบอร์ 18", "เข็มฉีดยาเบอร์ 21", "เข็มฉีดยาเบอร์ 24", "กระบอกฉีดยา 5 ml", "กระบอกฉีดยา 10 ml",
+  "กระบอกฉีดยา 20 ml", "กระบอกฉีดยา 50 ml", "ชุดให้น้ำเกลือสำหรับผู้ใหญ่", "ชุดให้น้ำเกลือสำหรับเด็ก",
+  "สายยางดูดเสมหะเบอร์ 12", "สายยางดูดเสมหะเบอร์ 14", "ถุงมือตรวจโรคสังเคราะห์ เบอร์ S", "ถุงมือตรวจโรคสังเคราะห์ เบอร์ M",
+  "ถุงมือตรวจโรคสังเคราะห์ เบอร์ L", "ถุงมือผ่าตัดสเตอร์ไรด์ เบอร์ 7", "ถุงมือผ่าตัดสเตอร์ไรด์ เบอร์ 7.5", "หน้ากากอนามัยทางการแพทย์ (Surgical Mask)",
+  "แอลกอฮอล์สำหรับฆ่าเชื้อ 70%", "น้ำเกลือล้างแผล Normal Saline 0.9% 1000ml", "โพวิโดนไอโอดีนสำหรับล้างแผล 450ml"
+];
+
+export const DENTAL_ITEMS = [
+  "ก้านสำลีทันตกรรม", "ถ้วยผสมอัลจิเนต", "ผงพิมพ์ปากอัลจิเนต (Alginate)", "วัสดุอุดฟัน Composite",
+  "เข็มฉีดยาชาทันตกรรม", "ยาชาทันตกรรมชนิดมี Adrenaline", "ฟลูออไรด์วานิช", "แผ่นยางกันน้ำลาย (Rubber Dam)",
+  "หัวกรอฟัน Diamond Bur", "กระดาษกัดตรวจสบฟัน (Articulating Paper)", "เอี๊ยมพลาสติกกันเปื้อนทันตกรรม", "หัวดูดน้ำลายพลาสติก (Saliva Ejector)"
+];
+
+export const LAB_ITEMS = [
+  "หลอดเก็บตัวอย่างเลือด EDTA (จุกม่วง)", "หลอดเก็บตัวอย่างเลือด Clot Blood (จุกแดง)", "หลอดเก็บตัวอย่างเลือด Sodium Fluoride (จุกเทา)",
+  "แผ่นสไลด์แก้ว (Microscope Slide)", "กระจกปิดสไลด์ (Cover Glass)", "ทิปสีฟ้า 1000 ไมโครลิตร (Blue Tip)", "ทิปสีเหลือง 200 ไมโครลิตร (Yellow Tip)",
+  "ทิปสีขาว 10 ไมโครลิตร (White Tip)", "กระดาษทดสอบสารเคมี pH Paper", "ถ้วยเก็บปัสสาวะสเตอร์ไรด์", "ขวดเก็บสิ่งส่งตรวจเพาะเชื้อ"
+];
+
+export const NUTRITION_ITEMS = [
+  "ข้าวสารคัดพิเศษ 100%", "น้ำมันพืชสำหรับปรุงอาหาร", "น้ำตาลทรายขาวบริสุทธิ์", "เกลือบริโภคเสริมไอโอดีน",
+  "นมกล่องรสจืดสำหรับผู้ป่วย", "อาหารทางการแพทย์สูตรครบถ้วน", "ไข่ไก่สดเบอร์ 3", "ฟอยล์ห่ออาหารสำหรับนึ่ง",
+  "ถุงเก็บตัวอย่างอาหาร", "หมวกคลุมผมสำหรับงานโภชนาการ", "ผ้ากันเปื้อนกันน้ำงานครัว"
+];
+
+export const PHARMACY_ITEMS = [
+  "ซองยาซิปล็อคพิมพ์ตราโรงพยาบาล 7x10 ซม.", "ซองยาซิปล็อคพิมพ์ตราโรงพยาบาล 9x13 ซม.", "ซองยาซิปล็อคพิมพ์ตราโรงพยาบาล 12x17 ซม.",
+  "ขวดยาน้ำสีชา 60 ml", "ขวดยาน้ำสีชา 120 ml", "ถุงพลาสติกหิ้วใส่ยาขนาดเล็ก", "ถุงพลาสติกหิ้วใส่ยาขนาดกลาง",
+  "กระดาษห่อยาเม็ด", "ถาดนับเม็ดยาพลาสติกพร้อมไม้พาย", "สติ๊กเกอร์ฉลากยาสำหรับเครื่องพิมพ์ความร้อน"
+];
+
+export const MAINTENANCE_ITEMS = [
+  "หลอดไฟ LED T8 18W", "หลอดไฟ LED Bulb 9W ขั้ว E27", "สายไฟ VAF 2x1.5 ตร.มม.", "สายไฟ VAF 2x2.5 ตร.มม.",
+  "เทปพันสายไฟ 3M", "ก๊อกน้ำสแตนเลส 1/2 นิ้ว", "สายน้ำดีสแตนเลส 1/2 นิ้ว", "วาล์วน้ำฝังกำแพง",
+  "กาวทาท่อ PVC", "ท่อ PVC ตราช้าง 1/2 นิ้ว", "ข้อต่อตรง PVC 1/2 นิ้ว", "ข้องอ 90 องศา PVC 1/2 นิ้ว",
+  "สีน้ำอะครีลิคทาภายในสีขาว", "แปรงทาสี 2.5 นิ้ว", "ลูกกลิ้งทาสี 9 นิ้ว"
+];
+
+export const VEHICLE_ITEMS = [
+  "น้ำมันเครื่องกึ่งสังเคราะห์สำหรับรถพยาบาล", "น้ำยาหล่อเย็นหม้อน้ำ (Coolant)", "น้ำยาฉีดกระจกรถยนต์",
+  "ใบปัดน้ำฝนรถพยาบาล", "หลอดไฟหน้ารถยนต์ H4", "ผ้าเช็ดรถไมโครไฟเบอร์", "น้ำยาล้างทำความสะอาดรถยนต์สูตรผสมแว็กซ์"
+];
+
+export const PR_ITEMS = [
+  "ป้ายไวนิลประชาสัมพันธ์งานสาธารณสุข", "แผ่นพับให้ความรู้เรื่องโรคติดต่อ", "โปสเตอร์รณรงค์สุขภาพขนาด A3",
+  "ขาตั้งป้าย Roll-up ขนาด 80x200 ซม.", "สติ๊กเกอร์ป้ายเตือนและสัญลักษณ์ความปลอดภัย"
+];
+
+export const LINEN_ITEMS = [
+  "ผ้าปูที่นอนผู้ป่วยสีฟ้าพิมพ์ตรา รพ.", "ปลอกหมอนผู้ป่วยสีฟ้า", "ผ้าขวางเตียงผู้ป่วย", "เสื้อผู้ป่วยผ่าหน้าแบบผูกเชือก",
+  "กางเกงผู้ป่วยแบบผูกเชือก", "ผ้าเช็ดตัวผู้ป่วยสีขาว", "ผงซักฟอกเกรดโรงพยาบาลฆ่าเชื้อ", "น้ำยาฟอกขาวฆ่าเชื้อสำหรับผ้าโรงพยาบาล"
+];
+
 const isCleared = () => {
   return typeof window !== 'undefined' && localStorage.getItem('survey_catalog_cleared') === 'true';
 };
 
-const rawCatalog: Record<CategoryId, string[]> = {
+const rawCatalog: Record<string, string[]> = {
   office: OFFICE_ITEMS,
   samnak: SAMNAK_ITEMS,
   kitchen: KITCHEN_ITEMS,
   electric: ELECTRIC_ITEMS,
-  computer: COMPUTER_ITEMS
+  computer: COMPUTER_ITEMS,
+  medical: MEDICAL_ITEMS,
+  dental: DENTAL_ITEMS,
+  lab: LAB_ITEMS,
+  nutrition: NUTRITION_ITEMS,
+  pharmacy: PHARMACY_ITEMS,
+  maintenance: MAINTENANCE_ITEMS,
+  vehicle: VEHICLE_ITEMS,
+  pr: PR_ITEMS,
+  linen: LINEN_ITEMS
 };
 
-export const CATALOG: Record<CategoryId, string[]> = new Proxy(rawCatalog, {
+export const CATALOG: Record<string, string[]> = new Proxy(rawCatalog, {
   get(target, prop) {
     if (isCleared()) {
       return [];
     }
-    return target[prop as CategoryId] || [];
+    return target[prop as string] || [];
   },
   ownKeys(target) {
     if (isCleared()) return [];
@@ -92,10 +157,14 @@ export const CATALOG: Record<CategoryId, string[]> = new Proxy(rawCatalog, {
     if (isCleared()) return undefined;
     return Reflect.getOwnPropertyDescriptor(target, prop);
   }
-}) as unknown as Record<CategoryId, string[]>;
+}) as unknown as Record<string, string[]>;
 
 const rawAllItems = Array.from(
-  new Set([...OFFICE_ITEMS, ...SAMNAK_ITEMS, ...KITCHEN_ITEMS, ...ELECTRIC_ITEMS, ...COMPUTER_ITEMS])
+  new Set([
+    ...OFFICE_ITEMS, ...SAMNAK_ITEMS, ...KITCHEN_ITEMS, ...ELECTRIC_ITEMS, ...COMPUTER_ITEMS,
+    ...MEDICAL_ITEMS, ...DENTAL_ITEMS, ...LAB_ITEMS, ...NUTRITION_ITEMS, ...PHARMACY_ITEMS,
+    ...MAINTENANCE_ITEMS, ...VEHICLE_ITEMS, ...PR_ITEMS, ...LINEN_ITEMS
+  ])
 );
 
 export const ALL_ITEMS: string[] = new Proxy(rawAllItems, {
@@ -123,10 +192,23 @@ export const defaultCategoryLabels: Record<string, string> = {
   samnak: 'วัสดุสำนักงาน (สำนัก)',
   kitchen: 'วัสดุงานบ้านงานครัว',
   electric: 'วัสดุไฟฟ้าและวิทยุ',
-  computer: 'วัสดุคอมพิวเตอร์ / หมึกพิมพ์'
+  computer: 'วัสดุคอมพิวเตอร์ / หมึกพิมพ์',
+  medical: 'วัสดุการแพทย์และเวชภัณฑ์มิใช่ยา',
+  dental: 'วัสดุทันตกรรม',
+  lab: 'วัสดุวิทยาศาสตร์การแพทย์ / ห้องปฏิบัติการ',
+  nutrition: 'วัสดุโภชนาการและอาหาร',
+  pharmacy: 'วัสดุเภสัชกรรม / คลังยา',
+  maintenance: 'วัสดุงานช่างและซ่อมบำรุง',
+  vehicle: 'วัสดุยานพาหนะและขนส่ง',
+  pr: 'วัสดุโฆษณาและประชาสัมพันธ์',
+  linen: 'วัสดุผ้าและงานซักฟอก'
 };
 
-export const defaultCategoryOrder: string[] = ['office', 'samnak', 'kitchen', 'electric', 'computer'];
+export const defaultCategoryOrder: string[] = [
+  'office', 'samnak', 'kitchen', 'electric', 'computer',
+  'medical', 'dental', 'lab', 'nutrition', 'pharmacy',
+  'maintenance', 'vehicle', 'pr', 'linen'
+];
 
 let memoryCustomCategories: Record<string, string> = {};
 let memoryCustomUnits: Record<string, string> = {};
@@ -207,34 +289,77 @@ export function setAllCustomUnits(units: Record<string, string>) {
   }
 }
 
+let memoryDisabledStandardCategories: string[] = [];
+
+export function getDisabledStandardCategories(): string[] {
+  if (typeof window === 'undefined') return memoryDisabledStandardCategories;
+  try {
+    const saved = localStorage.getItem('survey_disabled_standard_categories');
+    if (saved) {
+      memoryDisabledStandardCategories = JSON.parse(saved);
+    }
+  } catch {}
+  return memoryDisabledStandardCategories;
+}
+
+export function disableStandardCategory(catId: string) {
+  const current = Array.from(new Set([...getDisabledStandardCategories(), catId]));
+  memoryDisabledStandardCategories = current;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('survey_disabled_standard_categories', JSON.stringify(current));
+    } catch {}
+    window.dispatchEvent(new Event('categories_updated'));
+  }
+}
+
+export function restoreStandardCategory(catId: string) {
+  const current = getDisabledStandardCategories().filter(k => k !== catId);
+  memoryDisabledStandardCategories = current;
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('survey_disabled_standard_categories', JSON.stringify(current));
+    } catch {}
+    window.dispatchEvent(new Event('categories_updated'));
+  }
+}
+
+export function resetAllCategoriesToDefault() {
+  memoryDisabledStandardCategories = [];
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('survey_disabled_standard_categories');
+    } catch {}
+    window.dispatchEvent(new Event('categories_updated'));
+  }
+}
+
 export function getCategoryLabel(catId: string): string {
-  if (isCleared()) return '';
+  if (!catId) return '';
   const custom = getCustomCategories();
   if (custom[catId]) return custom[catId];
   return defaultCategoryLabels[catId] || catId;
 }
 
 export function getCategoryOrder(): string[] {
-  if (isCleared()) return [];
+  const disabled = getDisabledStandardCategories();
+  const activeStandard = defaultCategoryOrder.filter(c => !disabled.includes(c));
   const custom = Object.keys(getCustomCategories());
-  return Array.from(new Set([...defaultCategoryOrder, ...custom]));
+  return Array.from(new Set([...activeStandard, ...custom]));
 }
 
 export const CATEGORY_LABELS: Record<string, string> = new Proxy(defaultCategoryLabels, {
   get(target, prop) {
     if (typeof prop !== 'string') return undefined;
-    if (isCleared()) return '';
     const custom = getCustomCategories();
     if (custom[prop]) return custom[prop];
     return target[prop] || prop;
   },
   ownKeys(target) {
-    if (isCleared()) return [];
     const customKeys = Object.keys(getCustomCategories());
     return Array.from(new Set([...Object.keys(target), ...customKeys]));
   },
   getOwnPropertyDescriptor(target, prop) {
-    if (isCleared()) return undefined;
     return { enumerable: true, configurable: true };
   }
 });
@@ -600,18 +725,6 @@ export function getItemGpscCode(itemName: string): string {
   return `${prefix}-${suffix}`;
 }
 
-export function getItemStockInfo(itemName: string): { stockQty: number; stockStatus: 'low' | 'adequate' | 'excess' } {
-  const h = Math.abs(hashStr(itemName + '|stock'));
-  const stockQty = (h % 65);
-  let stockStatus: 'low' | 'adequate' | 'excess' = 'adequate';
-  if (stockQty <= 8) {
-    stockStatus = 'low';
-  } else if (stockQty > 40) {
-    stockStatus = 'excess';
-  }
-  return { stockQty, stockStatus };
-}
-
 export function getItemPriceForYear(name: string, unit: string, year: number): number {
   const basePrice = guessPrice(name, unit);
   const h = hashStr(name + '|price|' + year);
@@ -620,5 +733,10 @@ export function getItemPriceForYear(name: string, unit: string, year: number): n
   const pctChange = yearDiff * 6 + (h % 11) - 5; // -24% to +16% roughly
   const factor = 1 + pctChange / 100;
   return Math.max(5, Math.round(basePrice * factor));
+}
+
+export function getLatestPrice(name: string, unit?: string): number {
+  const u = unit || guessUnit(name);
+  return getItemPriceForYear(name, u, 2568);
 }
 

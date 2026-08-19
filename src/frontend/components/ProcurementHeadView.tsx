@@ -2,14 +2,15 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { CategoryId, RequestItem, User, Department, WorkGroup, DepartmentRevisionPermission } from '../types';
 import { CategoryBadge } from './CategoryBadge';
-import { ALL_ITEMS, CATALOG, CATEGORY_LABELS, CATEGORY_ORDER, deptName, fmtBaht, getItemCategory, guessPrice, getItemPriceForYear, guessUnit, DEPARTMENTS, INITIAL_WORK_GROUPS } from '../data/catalog';
+import { ALL_ITEMS, CATALOG, CATEGORY_LABELS, CATEGORY_ORDER, deptName, fmtBaht, getItemCategory, guessPrice, getItemPriceForYear, guessUnit, getLatestPrice, DEPARTMENTS, INITIAL_WORK_GROUPS } from '../data/catalog';
 import { CompareGrid } from './CompareGrid';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
 import { AuditTrailModal } from './AuditTrailModal';
+import { ItemAdjustmentBadge } from './ItemAdjustmentBadge';
 import { sortItems } from '../utils/sortHelper';
 import { exportProcurementPlanExcel } from '../utils/excelHelper';
-import { Info, ShieldCheck, AlertTriangle, CheckCheck, BarChart3, Inbox, X, Check, ArrowUpDown, RotateCcw, Search, Send, XCircle, TrendingUp, AlertCircle, CheckCircle2, Calendar, Download, Crown, Clock, Filter, UserCheck, PackageCheck, FileText, FileEdit, Unlock, Lock, Sparkles, PlusCircle, History } from 'lucide-react';
+import { Info, ShieldCheck, AlertTriangle, CheckCheck, BarChart3, Inbox, X, Check, ArrowUpDown, RotateCcw, Search, Send, XCircle, TrendingUp, AlertCircle, CheckCircle2, Calendar, Download, Crown, Clock, Filter, UserCheck, PackageCheck, FileText, FileEdit, Unlock, Lock, Sparkles, PlusCircle, History, RefreshCw } from 'lucide-react';
 
 interface ProcurementHeadViewProps {
   currentUser: User;
@@ -726,8 +727,9 @@ export const ProcurementHeadView: React.FC<ProcurementHeadViewProps> = ({
                               <div className="flex flex-wrap gap-2">
                                 {g.depts.map(d => {
                                   const isTarget = rejectTargetId === d.id;
+                                  const req = requests.find(r => r.id === d.id);
                                   return (
-                                    <div key={d.id} className="relative flex flex-col">
+                                    <div key={d.id} className="relative flex flex-col items-start gap-1">
                                       <div className={`inline-flex items-center gap-1.5 bg-slate-100 border text-slate-800 px-2 py-1 rounded-xl text-[11px] transition-all ${isTarget ? 'border-amber-400 bg-amber-50/50' : 'border-slate-200 hover:border-slate-300'}`}>
                                         {!isPlanFrozen && (
                                           <input
@@ -772,6 +774,15 @@ export const ProcurementHeadView: React.FC<ProcurementHeadViewProps> = ({
                                           </button>
                                         )}
                                       </div>
+
+                                      {/* Item adjustment badge for head review */}
+                                      {req && (
+                                        <ItemAdjustmentBadge
+                                          item={req}
+                                          compact
+                                          onViewAudit={() => setSelectedAuditItem(req)}
+                                        />
+                                      )}
 
                                       {isTarget && (
                                         <div className="absolute top-full left-0 mt-1 p-2.5 bg-white border border-amber-300 rounded-xl shadow-lg z-20 min-w-[220px] space-y-1.5 text-left">
@@ -820,15 +831,32 @@ export const ProcurementHeadView: React.FC<ProcurementHeadViewProps> = ({
                               </div>
                             </td>
                             <td className="p-2.5 text-right">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                disabled={isPlanFrozen}
-                                value={price}
-                                onChange={e => onUpdateUnitPrice(g.itemName, Math.max(0, parseFloat(e.target.value) || 0))}
-                                className="w-24 px-2 py-1 text-right font-mono font-semibold border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-600"
-                              />
+                              <div className="flex items-center justify-end gap-1.5">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.5"
+                                  disabled={isPlanFrozen}
+                                  value={price}
+                                  onChange={e => onUpdateUnitPrice(g.itemName, Math.max(0, parseFloat(e.target.value) || 0))}
+                                  className="w-20 px-2 py-1 text-right font-mono font-semibold border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-600"
+                                />
+                                {!isPlanFrozen && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const latestP = getLatestPrice(g.itemName, g.unit);
+                                      onUpdateUnitPrice(g.itemName, latestP);
+                                      onToastAlert(`ดึงราคาล่าสุดของ "${g.itemName}" (${latestP} บาท) เรียบร้อย`, 'info');
+                                    }}
+                                    className="p-1.5 text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg cursor-pointer transition-all shadow-2xs active:scale-95 text-[11px] font-bold flex items-center gap-0.5 shrink-0"
+                                    title="ดึงราคาต่อหน่วยล่าสุดจากฐานข้อมูลพัสดุสำหรับรายการนี้"
+                                  >
+                                    <RefreshCw className="w-3 h-3 text-indigo-600" />
+                                    <span className="hidden sm:inline">ดึงราคาล่าสุด</span>
+                                  </button>
+                                )}
+                              </div>
                             </td>
                             <td className="p-2.5 text-right font-mono font-bold text-slate-900">
                               {fmtBaht(lineBudget)}

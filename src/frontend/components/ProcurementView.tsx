@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { CategoryId, RequestItem, User, Department, WorkGroup, DepartmentRevisionPermission } from '../types';
 import { CategoryBadge } from './CategoryBadge';
-import { ALL_ITEMS, CATALOG, CATEGORY_LABELS, CATEGORY_ORDER, deptName, fmtBaht, getItemCategory, guessPrice, getItemPriceForYear, guessUnit, DEPARTMENTS } from '../data/catalog';
+import { ALL_ITEMS, CATALOG, CATEGORY_LABELS, CATEGORY_ORDER, deptName, fmtBaht, getItemCategory, guessPrice, getItemPriceForYear, guessUnit, DEPARTMENTS, getLatestPrice } from '../data/catalog';
 import { CompareGrid } from './CompareGrid';
 import { PaginationBar } from './PaginationBar';
 import { TableControlPanel, SortOption } from './TableControlPanel';
 import { AuditTrailModal } from './AuditTrailModal';
+import { ItemAdjustmentBadge } from './ItemAdjustmentBadge';
 import { sortItems } from '../utils/sortHelper';
-import { Info, Send, Layers, BarChart3, Calculator, ArrowUpDown, Calendar, TrendingUp, XCircle, RotateCcw, Download, Search, AlertCircle, CheckCircle2, CheckCheck, Crown, Clock, Filter, UserCheck, PackageCheck, ShieldCheck, Database, FileEdit, Unlock, Lock, Sparkles, History, PlusCircle } from 'lucide-react';
+import { Info, Send, Layers, BarChart3, Calculator, ArrowUpDown, Calendar, TrendingUp, XCircle, RotateCcw, Download, Search, AlertCircle, CheckCircle2, CheckCheck, Crown, Clock, Filter, UserCheck, PackageCheck, ShieldCheck, Database, FileEdit, Unlock, Lock, Sparkles, History, PlusCircle, RefreshCw, Plus, Trash2, Tag, X } from 'lucide-react';
 
 interface ProcurementViewProps {
   currentUser: User;
@@ -19,6 +20,8 @@ interface ProcurementViewProps {
   workGroups?: WorkGroup[];
   revisionPermissions?: Record<string, DepartmentRevisionPermission>;
   onUnlockRevision?: (deptId: string, isUnlocked: boolean, note?: string, expiresAt?: string) => void;
+  onBatchUnlockRevision?: (deptIds: string[], isUnlocked: boolean, note?: string, expiresAt?: string) => void;
+  onAddProcurementRequest?: (item: { deptId: string; itemName: string; unit?: string; qtyRequested: number; unitPrice?: number; reason: string }) => void;
   onUpdateUnitPrice: (itemName: string, price: number) => void;
   onUpdateQty: (requestId: string, newQty: number) => void;
   onSubmitToProcHead: (specificIds?: string[]) => void;
@@ -37,6 +40,8 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
   workGroups = [],
   revisionPermissions = {},
   onUnlockRevision,
+  onBatchUnlockRevision,
+  onAddProcurementRequest,
   onUpdateUnitPrice,
   onUpdateQty,
   onSubmitToProcHead,
@@ -52,8 +57,19 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
   const [sortField, setSortField] = useState<'itemName' | 'totalQty' | 'price' | 'lineBudget'>('itemName');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
+  // Add Procurement Item Modal State
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addDeptId, setAddDeptId] = useState(departments[0]?.id || 'thurakan');
+  const [addCategory, setAddCategory] = useState<CategoryId>('office');
+  const [addItemName, setAddItemName] = useState('');
+  const [addUnit, setAddUnit] = useState('');
+  const [addQty, setAddQty] = useState(10);
+  const [addPrice, setAddPrice] = useState(0);
+  const [addReason, setAddReason] = useState('จัดหาเพิ่มเติมตามความต้องการของหน่วยงาน');
+
   // Revision tab specific states
   const [revisionDeptSearch, setRevisionDeptSearch] = useState('');
+  const [selectedWorkGroupFilter, setSelectedWorkGroupFilter] = useState<string>('all');
   const [revisionNoteInputs, setRevisionNoteInputs] = useState<Record<string, string>>({});
   const [revisionExpiryInputs, setRevisionExpiryInputs] = useState<Record<string, string>>({});
 
@@ -520,6 +536,54 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
                   />
                 </div>
 
+                {/* Button to add new material to procurement plan */}
+                {onAddProcurementRequest && !isPlanFrozen && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const firstItem = CATALOG[addCategory]?.[0] || '';
+                      setAddItemName(firstItem);
+                      setAddUnit(guessUnit(firstItem));
+                      setAddPrice(guessPrice(firstItem, guessUnit(firstItem)));
+                      setShowAddModal(true);
+                    }}
+                    className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer transition-all shadow-xs flex items-center gap-1.5 active:scale-95"
+                    title="เพิ่มรายการวัสดุใหม่เข้าสู่แผนการจัดซื้อพัสดุ"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ เพิ่มรายการพัสดุเข้าแผน</span>
+                  </button>
+                )}
+
+                {/* Button to pull all latest prices */}
+                {!isPlanFrozen && groupList.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onRequestConfirm({
+                        title: 'ยืนยันการดึงราคาล่าสุดทั้งหมด',
+                        message: `คุณต้องการดึงราคาต่อหน่วยล่าสุดจากฐานข้อมูลพัสดุสำหรับรายการทั้งหมด ${groupList.length} รายการ หรือไม่?`,
+                        confirmText: 'ดึงราคาล่าสุดทั้งหมด',
+                        variant: 'primary',
+                        onConfirm: () => {
+                          let updatedCount = 0;
+                          groupList.forEach(g => {
+                            const latestP = getLatestPrice(g.itemName, g.unit);
+                            onUpdateUnitPrice(g.itemName, latestP);
+                            updatedCount++;
+                          });
+                          onToastAlert(`ดึงราคาต่อหน่วยล่าสุดสำเร็จ ${updatedCount} รายการเรียบร้อยแล้ว`, 'success');
+                        }
+                      });
+                    }}
+                    className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 cursor-pointer transition-all shadow-2xs flex items-center gap-1.5 active:scale-95"
+                    title="ดึงราคาต่อหน่วยล่าสุดจากฐานข้อมูลสำหรับทุกรายการในหน้านี้พร้อมกัน"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-amber-700" />
+                    <span>⚡ ดึงราคาล่าสุดทั้งหมด</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => {
@@ -669,7 +733,6 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
               </div>
             ) : (
               <>
-
                 <div className="overflow-x-auto">
                   <table className="w-full text-base text-left">
                     <thead className="bg-slate-50 text-slate-600 uppercase font-mono text-sm border-b border-slate-200 select-none">
@@ -696,7 +759,7 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
                         <th className="p-2.5">แยกตามหน่วยงาน (ปรับจำนวนได้)</th>
                         <th 
                           onClick={() => handleHeaderSort('price')}
-                          className="p-2.5 text-right w-32 cursor-pointer hover:bg-slate-100 transition-colors"
+                          className="p-2.5 text-right w-40 cursor-pointer hover:bg-slate-100 transition-colors"
                         >
                           <div className="flex items-center justify-end gap-1">
                             <span>ราคา/หน่วย (บาท)</span>
@@ -728,129 +791,156 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
                             <td className="p-2.5 text-right font-mono font-bold text-indigo-900">
                               {g.totalQty} {g.unit}
                             </td>
-                             <td className="p-2.5">
-                               <div className="flex flex-col gap-2">
-                                 <div className="flex flex-wrap gap-1.5">
-                                   {g.depts.map(d => {
-                                     const isTarget = rejectTargetId === d.id;
-                                     return (
-                                       <div key={d.id} className="relative flex flex-col">
-                                         <div className={`inline-flex items-center gap-1.5 bg-slate-100 border text-slate-800 px-2 py-1 rounded-xl text-[11px] transition-all ${isTarget ? 'border-amber-400 bg-amber-50/50' : 'border-slate-200 hover:border-slate-300'}`}>
-                                           {!isPlanFrozen && (
-                                             <input
-                                               type="checkbox"
-                                               checked={selectedRequestIds.includes(d.id)}
-                                               onChange={e => {
-                                                 if (e.target.checked) {
-                                                   setSelectedRequestIds(prev => [...prev, d.id]);
-                                                 } else {
-                                                    setSelectedRequestIds(prev => prev.filter(id => id !== d.id));
-                                                 }
-                                               }}
-                                               className="w-3.5 h-3.5 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer mr-0.5"
-                                             />
-                                           )}
-                                           <span className="font-medium">{d.dept}:</span>
-                                           <input
-                                             type="number"
-                                             min="0"
-                                             disabled={isPlanFrozen}
-                                             value={d.qty}
-                                             onChange={e => onUpdateQty(d.id, Math.max(0, parseInt(e.target.value, 10) || 0))}
-                                             className="w-12 px-1 text-center font-mono font-bold border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:border-indigo-600"
-                                           />
-                                           {!isPlanFrozen && (
-                                             <button
-                                               type="button"
-                                               onClick={() => {
-                                                 if (rejectTargetId === d.id) {
-                                                   setRejectTargetId(null);
-                                                 } else {
-                                                   setRejectTargetId(d.id);
-                                                   setRejectComment('');
-                                                 }
-                                               }}
-                                               title="ตีกลับหรือปฏิเสธคำขอนี้"
-                                               className="p-0.5 text-slate-400 hover:text-rose-600 rounded-md hover:bg-white transition-all cursor-pointer"
-                                             >
-                                               <XCircle className="w-3.5 h-3.5" />
-                                             </button>
-                                           )}
-                                         </div>
+                            <td className="p-2.5">
+                              <div className="flex flex-col gap-2">
+                                <div className="flex flex-wrap gap-1.5">
+                                  {g.depts.map(d => {
+                                    const isTarget = rejectTargetId === d.id;
+                                    const req = requests.find(r => r.id === d.id);
+                                    return (
+                                      <div key={d.id} className="relative flex flex-col items-start gap-1">
+                                        <div className={`inline-flex items-center gap-1.5 bg-slate-100 border text-slate-800 px-2 py-1 rounded-xl text-[11px] transition-all ${isTarget ? 'border-amber-400 bg-amber-50/50' : 'border-slate-200 hover:border-slate-300'}`}>
+                                          {!isPlanFrozen && (
+                                            <input
+                                              type="checkbox"
+                                              checked={selectedRequestIds.includes(d.id)}
+                                              onChange={e => {
+                                                if (e.target.checked) {
+                                                  setSelectedRequestIds(prev => [...prev, d.id]);
+                                                } else {
+                                                  setSelectedRequestIds(prev => prev.filter(id => id !== d.id));
+                                                }
+                                              }}
+                                              className="w-3.5 h-3.5 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500 cursor-pointer mr-0.5"
+                                            />
+                                          )}
+                                          <span className="font-medium">{d.dept}:</span>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            disabled={isPlanFrozen}
+                                            value={d.qty}
+                                            onChange={e => onUpdateQty(d.id, Math.max(0, parseInt(e.target.value, 10) || 0))}
+                                            className="w-12 px-1 text-center font-mono font-bold border border-slate-300 rounded-lg bg-white text-slate-900 focus:outline-none focus:border-indigo-600"
+                                          />
+                                          {!isPlanFrozen && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                if (rejectTargetId === d.id) {
+                                                  setRejectTargetId(null);
+                                                } else {
+                                                  setRejectTargetId(d.id);
+                                                  setRejectComment('');
+                                                }
+                                              }}
+                                              title="ตีกลับหรือปฏิเสธคำขอนี้"
+                                              className="p-0.5 text-slate-400 hover:text-rose-600 rounded-md hover:bg-white transition-all cursor-pointer"
+                                            >
+                                              <XCircle className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
 
-                                         {isTarget && (
-                                           <div className="absolute top-full left-0 mt-1 p-2.5 bg-white border border-amber-300 rounded-xl shadow-lg z-20 min-w-[220px] space-y-1.5 text-left">
-                                             <div className="text-[10px] font-bold text-amber-800 flex items-center gap-1">
-                                               <RotateCcw className="w-3 h-3" />
-                                               <span>จัดการคำขอ {d.dept}</span>
-                                             </div>
-                                             <input
-                                               type="text"
-                                               placeholder="ระบุเหตุผลการตีกลับ/ปฏิเสธ... (จำเป็น)"
-                                               value={rejectComment}
-                                               onChange={e => setRejectComment(e.target.value)}
-                                               className="w-full px-2 py-1 text-[11px] border border-amber-200 rounded-lg focus:outline-none focus:border-amber-500 bg-amber-50/20 text-slate-800 font-medium"
-                                             />
-                                             {!rejectComment.trim() && (
-                                               <div className="text-[9px] text-rose-600 font-bold">
-                                                 * กรุณาระบุเหตุผลในการจัดการ
-                                               </div>
-                                             )}
-                                             <div className="flex gap-1 justify-end">
-                                               <button
-                                                 type="button"
-                                                 onClick={() => setRejectTargetId(null)}
-                                                 className="px-1.5 py-0.5 text-[9px] bg-slate-100 text-slate-600 rounded-md hover:bg-slate-200 font-bold"
-                                               >
-                                                 ปิด
-                                               </button>
-                                               <button
-                                                 type="button"
-                                                 disabled={!rejectComment.trim()}
-                                                 onClick={() => {
-                                                   const comment = rejectComment.trim();
-                                                   onRejectRequest(d.id, comment, 'return');
-                                                   setRejectTargetId(null);
-                                                   setRejectComment('');
-                                                   onToastAlert(`ตีกลับคำขอของ ${d.dept} ไปยังหัวหน้ากลุ่มงาน/ฝ่ายเรียบร้อยแล้ว`, 'success');
-                                                 }}
-                                                 className="px-2 py-0.5 text-[9px] bg-amber-500 hover:bg-amber-600 text-white rounded-md font-bold whitespace-nowrap disabled:opacity-45 disabled:cursor-not-allowed"
-                                               >
-                                                 ตีกลับแผนก
-                                               </button>
-                                               <button
-                                                 type="button"
-                                                 disabled={!rejectComment.trim()}
-                                                 onClick={() => {
-                                                   const comment = rejectComment.trim();
-                                                   onRejectRequest(d.id, comment, 'reject');
-                                                   setRejectTargetId(null);
-                                                   setRejectComment('');
-                                                   onToastAlert(`ปฏิเสธคำขอของ ${d.dept} เรียบร้อยแล้ว`, 'error');
-                                                 }}
-                                                 className="px-2 py-0.5 text-[9px] bg-rose-600 hover:bg-rose-700 text-white rounded-md font-bold whitespace-nowrap disabled:opacity-45 disabled:cursor-not-allowed"
-                                               >
-                                                 ปฏิเสธ
-                                               </button>
-                                             </div>
-                                           </div>
-                                         )}
-                                       </div>
-                                     );
-                                   })}
-                                 </div>
-                               </div>
-                             </td>
+                                        {/* Item adjustment badge for procurement view */}
+                                        {req && (
+                                          <ItemAdjustmentBadge
+                                            item={req}
+                                            compact
+                                            onViewAudit={() => setSelectedAuditItem(req)}
+                                          />
+                                        )}
+
+                                        {isTarget && (
+                                          <div className="absolute top-full left-0 mt-1 p-2.5 bg-white border border-amber-300 rounded-xl shadow-lg z-20 min-w-[220px] space-y-1.5 text-left">
+                                            <div className="text-[10px] font-bold text-amber-800 flex items-center gap-1">
+                                              <RotateCcw className="w-3 h-3" />
+                                              <span>จัดการคำขอ {d.dept}</span>
+                                            </div>
+                                            <input
+                                              type="text"
+                                              placeholder="ระบุเหตุผลการตีกลับ/ปฏิเสธ... (จำเป็น)"
+                                              value={rejectComment}
+                                              onChange={e => setRejectComment(e.target.value)}
+                                              className="w-full px-2 py-1 text-[11px] border border-amber-200 rounded-lg focus:outline-none focus:border-amber-500 bg-amber-50/20 text-slate-800 font-medium"
+                                            />
+                                            {!rejectComment.trim() && (
+                                              <div className="text-[9px] text-rose-600 font-bold">
+                                                * กรุณาระบุเหตุผลในการจัดการ
+                                              </div>
+                                            )}
+                                            <div className="flex gap-1 justify-end">
+                                              <button
+                                                type="button"
+                                                onClick={() => setRejectTargetId(null)}
+                                                className="px-1.5 py-0.5 text-[9px] bg-slate-100 text-slate-600 rounded-md hover:bg-slate-200 font-bold"
+                                              >
+                                                ปิด
+                                              </button>
+                                              <button
+                                                type="button"
+                                                disabled={!rejectComment.trim()}
+                                                onClick={() => {
+                                                  const comment = rejectComment.trim();
+                                                  onRejectRequest(d.id, comment, 'return');
+                                                  setRejectTargetId(null);
+                                                  setRejectComment('');
+                                                  onToastAlert(`ตีกลับคำขอของ ${d.dept} ไปยังหัวหน้ากลุ่มงาน/ฝ่ายเรียบร้อยแล้ว`, 'success');
+                                                }}
+                                                className="px-2 py-0.5 text-[9px] bg-amber-500 hover:bg-amber-600 text-white rounded-md font-bold whitespace-nowrap disabled:opacity-45 disabled:cursor-not-allowed"
+                                              >
+                                                ตีกลับแผนก
+                                              </button>
+                                              <button
+                                                type="button"
+                                                disabled={!rejectComment.trim()}
+                                                onClick={() => {
+                                                  const comment = rejectComment.trim();
+                                                  onRejectRequest(d.id, comment, 'reject');
+                                                  setRejectTargetId(null);
+                                                  setRejectComment('');
+                                                  onToastAlert(`ปฏิเสธคำขอของ ${d.dept} เรียบร้อยแล้ว`, 'error');
+                                                }}
+                                                className="px-2 py-0.5 text-[9px] bg-rose-600 hover:bg-rose-700 text-white rounded-md font-bold whitespace-nowrap disabled:opacity-45 disabled:cursor-not-allowed"
+                                              >
+                                                ปฏิเสธ
+                                              </button>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </td>
                             <td className="p-2.5 text-right">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.5"
-                                disabled={isPlanFrozen}
-                                value={price}
-                                onChange={e => onUpdateUnitPrice(g.itemName, Math.max(0, parseFloat(e.target.value) || 0))}
-                                className="w-24 px-2 py-1 text-right font-mono font-semibold border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-600"
-                              />
+                              <div className="flex items-center justify-end gap-1.5">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.5"
+                                  disabled={isPlanFrozen}
+                                  value={price}
+                                  onChange={e => onUpdateUnitPrice(g.itemName, Math.max(0, parseFloat(e.target.value) || 0))}
+                                  className="w-20 px-2 py-1 text-right font-mono font-semibold border border-slate-200 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-600"
+                                />
+                                {!isPlanFrozen && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const latestP = getLatestPrice(g.itemName, g.unit);
+                                      onUpdateUnitPrice(g.itemName, latestP);
+                                      onToastAlert(`ดึงราคาล่าสุดของ "${g.itemName}" (${latestP} บาท) เรียบร้อย`, 'info');
+                                    }}
+                                    className="p-1.5 text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg cursor-pointer transition-all shadow-2xs active:scale-95 text-[11px] font-bold flex items-center gap-0.5 shrink-0"
+                                    title="ดึงราคาต่อหน่วยล่าสุดจากฐานข้อมูลพัสดุสำหรับรายการนี้"
+                                  >
+                                    <RefreshCw className="w-3 h-3 text-indigo-600" />
+                                    <span className="hidden sm:inline">ดึงราคาล่าสุด</span>
+                                  </button>
+                                )}
+                              </div>
                             </td>
                             <td className="p-2.5 text-right font-mono font-bold text-slate-900">
                               {fmtBaht(lineBudget)}
@@ -2124,6 +2214,221 @@ export const ProcurementView: React.FC<ProcurementViewProps> = ({
           item={selectedAuditItem}
           onClose={() => setSelectedAuditItem(null)}
         />
+      )}
+
+      {/* Add New Item to Procurement Plan Modal */}
+      {showAddModal && onAddProcurementRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-4 bg-gradient-to-r from-indigo-900 to-indigo-800 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-white/10 rounded-xl">
+                  <Plus className="w-5 h-5 text-indigo-200" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base">เพิ่มรายการพัสดุใหม่เข้าสู่แผน</h3>
+                  <p className="text-xs text-indigo-200">เจ้าหน้าที่พัสดุเพิ่มรายการและระบุหน่วยงานที่ต้องการจัดหา</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="p-1.5 text-white/70 hover:text-white hover:bg-white/10 rounded-lg cursor-pointer transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                if (!addItemName.trim()) {
+                  onToastAlert('กรุณาระบุชื่อรายการพัสดุ', 'error');
+                  return;
+                }
+                if (addQty <= 0) {
+                  onToastAlert('จำนวนต้องมากกว่า 0', 'error');
+                  return;
+                }
+                onAddProcurementRequest({
+                  itemName: addItemName.trim(),
+                  unit: addUnit.trim() || 'หน่วย',
+                  unitPrice: addPrice,
+                  deptId: addDeptId,
+                  qtyRequested: addQty,
+                  reason: addReason.trim() || 'เจ้าหน้าที่พัสดุเพิ่มรายการเข้าแผนการจัดซื้อ'
+                });
+                onToastAlert(`เพิ่มรายการ "${addItemName}" (${addQty} ${addUnit}) เข้าแผนสำเร็จ`, 'success');
+                setShowAddModal(false);
+                setAddReason('จัดหาเพิ่มเติมตามความต้องการของหน่วยงาน');
+                setAddQty(10);
+              }}
+              className="p-5 space-y-4 overflow-y-auto"
+            >
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">หมวดหมู่พัสดุ</label>
+                <select
+                  value={addCategory}
+                  onChange={e => {
+                    const cat = e.target.value as CategoryId;
+                    setAddCategory(cat);
+                    const firstItem = CATALOG[cat]?.[0] || '';
+                    setAddItemName(firstItem);
+                    setAddUnit(guessUnit(firstItem));
+                    setAddPrice(guessPrice(firstItem, guessUnit(firstItem)));
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                >
+                  {CATEGORY_ORDER.map(cat => (
+                    <option key={cat} value={cat}>
+                      {CATEGORY_LABELS[cat] || cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">ชื่อรายการพัสดุ</label>
+                <div className="space-y-1.5">
+                  <select
+                    value={CATALOG[addCategory]?.includes(addItemName) ? addItemName : '__custom__'}
+                    onChange={e => {
+                      if (e.target.value === '__custom__') {
+                        setAddItemName('');
+                      } else {
+                        setAddItemName(e.target.value);
+                        setAddUnit(guessUnit(e.target.value));
+                        setAddPrice(guessPrice(e.target.value, guessUnit(e.target.value)));
+                      }
+                    }}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                  >
+                    <optgroup label="รายการมาตรฐานในระบบ">
+                      {(CATALOG[addCategory] || []).map(item => (
+                        <option key={item} value={item}>{item}</option>
+                      ))}
+                    </optgroup>
+                    <option value="__custom__">➕ พิมพ์ระบุรายการเอง (ไม่อยู่ในแคตตาล็อก)...</option>
+                  </select>
+
+                  {(!CATALOG[addCategory]?.includes(addItemName) || addItemName === '') && (
+                    <input
+                      type="text"
+                      placeholder="พิมพ์ชื่อรายการพัสดุที่ต้องการเพิ่ม..."
+                      value={addItemName}
+                      onChange={e => setAddItemName(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border border-indigo-300 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-indigo-50/30"
+                      required
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">หน่วยนับ</label>
+                  <input
+                    type="text"
+                    value={addUnit}
+                    onChange={e => setAddUnit(e.target.value)}
+                    placeholder="เช่น ด้าม, เล่ม, รีม"
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">ราคาต่อหน่วย (บาท)</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const lp = getLatestPrice(addItemName, addUnit);
+                        setAddPrice(lp);
+                      }}
+                      className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 cursor-pointer"
+                      title="ดึงราคาต่อหน่วยล่าสุดจากฐานข้อมูล"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      ดึงราคาล่าสุด
+                    </button>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={addPrice}
+                    onChange={e => setAddPrice(Math.max(0, parseFloat(e.target.value) || 0))}
+                    className="w-full px-3 py-2 text-sm font-mono border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">หน่วยงานที่ระบุความต้องการ</label>
+                  <select
+                    value={addDeptId}
+                    onChange={e => setAddDeptId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 bg-white"
+                  >
+                    {departments.map(d => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">จำนวนที่ขอ</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={addQty}
+                    onChange={e => setAddQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="w-full px-3 py-2 text-sm font-mono font-bold border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-indigo-50/60 rounded-xl border border-indigo-100 flex items-center justify-between text-xs">
+                <span className="text-indigo-800 font-medium">รวมงบประมาณรายการนี้:</span>
+                <span className="font-mono font-bold text-indigo-900 text-sm">
+                  {fmtBaht(addPrice * addQty)}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">เหตุผลความจำเป็น / หมายเหตุ</label>
+                <input
+                  type="text"
+                  placeholder="เช่น เพิ่มตามนโยบายจัดหาประจำปี, สำรองส่วนกลาง ฯลฯ"
+                  value={addReason}
+                  onChange={e => setAddReason(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer transition-all"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl cursor-pointer transition-all shadow-xs flex items-center gap-1.5 active:scale-95"
+                >
+                  <Plus className="w-4 h-4" />
+                  เพิ่มเข้าระบบพัสดุ
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

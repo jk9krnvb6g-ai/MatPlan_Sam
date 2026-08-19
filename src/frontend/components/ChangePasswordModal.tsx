@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { Key, X, Check } from 'lucide-react';
+import { Key, X, Check, Loader2 } from 'lucide-react';
 
 interface ChangePasswordModalProps {
   currentUser: User;
   onClose: () => void;
-  onSavePassword: (newPw: string) => void;
+  onSavePassword: (currentPw: string, newPw: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
@@ -17,13 +17,14 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
-    if (currentPassword !== currentUser.password) {
-      setErrorMsg('รหัสผ่านปัจจุบันไม่ถูกต้อง');
+    if (!currentPassword) {
+      setErrorMsg('กรุณากรอกรหัสผ่านปัจจุบัน');
       return;
     }
 
@@ -37,7 +38,17 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
       return;
     }
 
-    onSavePassword(newPassword);
+    try {
+      setIsSubmitting(true);
+      const res = await onSavePassword(currentPassword, newPassword);
+      if (!res.success) {
+        setErrorMsg(res.error || 'เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'เกิดข้อผิดพลาดในการเปลี่ยนรหัสผ่าน');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -46,7 +57,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
         <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
             <Key className="w-4 h-4 text-teal-700" />
-            เปลี่ยนรหัสผ่าน
+            เปลี่ยนรหัสผ่าน (@{currentUser.username})
           </div>
           <button
             type="button"
@@ -65,42 +76,45 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
 
         <form onSubmit={handleSubmit} className="space-y-3 text-xs">
           <div className="space-y-1">
-            <label className="block font-semibold text-slate-700">รหัสผ่านปัจจุบัน</label>
+            <label className="block font-semibold text-slate-700">รหัสผ่านปัจจุบัน <span className="text-rose-500">*</span></label>
             <input
               type="password"
               required
               value={currentPassword}
               onChange={e => setCurrentPassword(e.target.value)}
-              className="w-full p-2 border border-slate-200 rounded-xl focus:outline-none focus:border-teal-600"
+              placeholder="กรอกรหัสผ่านปัจจุบันที่ใช้ล็อกอิน"
+              className="w-full p-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
           </div>
 
           <div className="space-y-1">
-            <label className="block font-semibold text-slate-700">รหัสผ่านใหม่</label>
+            <label className="block font-semibold text-slate-700">รหัสผ่านใหม่ <span className="text-rose-500">*</span></label>
             <input
               type="password"
               required
               value={newPassword}
               onChange={e => setNewPassword(e.target.value)}
               placeholder="อย่างน้อย 4 ตัวอักษร"
-              className="w-full p-2 border border-slate-200 rounded-xl focus:outline-none focus:border-teal-600"
+              className="w-full p-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
           </div>
 
           <div className="space-y-1">
-            <label className="block font-semibold text-slate-700">ยืนยันรหัสผ่านใหม่</label>
+            <label className="block font-semibold text-slate-700">ยืนยันรหัสผ่านใหม่ <span className="text-rose-500">*</span></label>
             <input
               type="password"
               required
               value={confirmPassword}
               onChange={e => setConfirmPassword(e.target.value)}
-              className="w-full p-2 border border-slate-200 rounded-xl focus:outline-none focus:border-teal-600"
+              placeholder="กรอกรหัสผ่านใหม่อีกครั้ง"
+              className="w-full p-2.5 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={onClose}
               className="px-3.5 py-2 border border-slate-300 text-slate-700 font-semibold rounded-xl hover:bg-slate-50 transition-colors"
             >
@@ -108,10 +122,20 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white font-bold rounded-xl shadow-md transition-colors flex items-center gap-1.5"
+              disabled={isSubmitting}
+              className="px-4 py-2 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 text-white font-bold rounded-xl shadow-md transition-colors flex items-center gap-1.5 cursor-pointer"
             >
-              <Check className="w-3.5 h-3.5" />
-              บันทึกรหัสผ่านใหม่
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>กำลังตรวจสอบ...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>บันทึกรหัสผ่านใหม่</span>
+                </>
+              )}
             </button>
           </div>
         </form>

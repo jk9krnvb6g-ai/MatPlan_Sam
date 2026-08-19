@@ -15,7 +15,9 @@ import {
   setAllCustomCategories,
   setAllCustomUnits,
   CATEGORY_LABELS,
-  guessUnit 
+  guessUnit,
+  guessPrice,
+  getLatestPrice 
 } from './data/catalog';
 import { calculateSpike, checkSubmissionOpen, generateWorkflowNotifications } from './utils/workflowHelper';
 
@@ -521,56 +523,8 @@ export default function App() {
     };
   }, [apiBase, isLoadingBackend]);
 
-  // Auto-login on mount if token is saved
-  useEffect(() => {
-    const savedToken = localStorage.getItem('survey_token');
-    if (!savedToken) return;
-
-    const verifyToken = async () => {
-      try {
-        let res: Response | null = null;
-        try {
-          res = await fetch(`${apiBase}/auth/me`, {
-            headers: { 'Authorization': `Bearer ${savedToken}` }
-          });
-          if (!res || !res.ok) {
-            res = await fetch('/api/auth/me', {
-              headers: { 'Authorization': `Bearer ${savedToken}` }
-            });
-          }
-        } catch (e) {
-          try {
-            res = await fetch('/api/auth/me', {
-              headers: { 'Authorization': `Bearer ${savedToken}` }
-            });
-          } catch (err2) {}
-        }
-
-        if (!res) return;
-
-        const contentType = res.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-          return;
-        }
-
-        const resData = await res.json();
-        if (resData.success && resData.user) {
-          setCurrentUser(resData.user);
-          if (resData.user.role === 'admin') {
-            setActiveRole('staff');
-          } else {
-            setActiveRole(resData.user.role);
-          }
-        } else if (res.status === 401 || res.status === 403) {
-          localStorage.removeItem('survey_token');
-        }
-      } catch (err) {
-        console.warn('Auto-login verification skipped or failed:', err);
-      }
-    };
-
-    verifyToken();
-  }, [apiBase]);
+  // Note: Default to Login screen as main page on every session (must login every time)
+  // Auto-login on mount removed to enforce explicit authentication per user request
 
   // Login handler
   const handleLogin = async (username: string, password: string): Promise<{ success: boolean; error?: string }> => {
@@ -673,6 +627,56 @@ export default function App() {
       }
     } catch (err) {
       return { success: false, error: 'เกิดข้อผิดพลาดในการติดต่อระบบรีเซ็ตรหัสผ่าน' };
+    }
+  };
+
+  const handleChangeSelfPassword = async (currentPw: string, newPw: string): Promise<{ success: boolean; error?: string }> => {
+    if (!currentUser) return { success: false, error: 'ไม่พบข้อมูลผู้ใช้งานที่เข้าสู่ระบบ' };
+    try {
+      let res: Response | null = null;
+      try {
+        res = await fetch(`${apiBase}/auth/change-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: currentUser.username,
+            currentPassword: currentPw,
+            newPassword: newPw
+          })
+        });
+      } catch (e) {
+        res = await fetch('/api/auth/change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: currentUser.username,
+            currentPassword: currentPw,
+            newPassword: newPw
+          })
+        });
+      }
+
+      const contentType = res?.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        // Local state update fallback
+        setUsers(prev => prev.map(u => u.username === currentUser.username ? { ...u, password: newPw } : u));
+        logAction('edit', 'users', `ผู้ใช้งาน @${currentUser.username} เปลี่ยนรหัสผ่านของตนเองสำเร็จ`);
+        handleToast('เปลี่ยนรหัสผ่านใหม่เรียบร้อยแล้ว!', 'success');
+        setShowChangePasswordModal(false);
+        return { success: true };
+      }
+      const data = await res.json();
+      if (data.success) {
+        setUsers(prev => prev.map(u => u.username === currentUser.username ? { ...u, password: newPw } : u));
+        logAction('edit', 'users', `ผู้ใช้งาน @${currentUser.username} เปลี่ยนรหัสผ่านของตนเองสำเร็จ`);
+        handleToast('เปลี่ยนรหัสผ่านใหม่เรียบร้อยแล้ว!', 'success');
+        setShowChangePasswordModal(false);
+        return { success: true };
+      } else {
+        return { success: false, error: data.error || 'รหัสผ่านปัจจุบันไม่ถูกต้อง' };
+      }
+    } catch (err) {
+      return { success: false, error: 'เกิดข้อผิดพลาดในการติดต่อระบบเปลี่ยนรหัสผ่าน' };
     }
   };
 
@@ -906,6 +910,45 @@ export default function App() {
     }).catch(err => console.error('Error syncing revision permission:', err));
   };
 
+  const handleBatchUnlockRevision = (deptIds: string[], isUnlocked: boolean, note?: string, expiresAt?: string) => {
+    setRevisionPermissions(prev => {
+      const updated = { ...prev };
+      deptIds.forEach(deptId => {
+        updated[deptId] = {
+          deptId,
+          isUnlocked,
+          unlockedAt: isUnlocked ? new Date().toISOString() : undefined,
+          unlockedBy: currentUser ? currentUser.name : 'เจ้าหน้าที่ฝ่ายพัสดุ',
+          expiresAt,
+          note: note || ''
+        };
+      });
+      return updated;
+    });
+
+    logAction(
+      'status_change',
+      'requests',
+      isUnlocked 
+        ? `ฝ่ายพัสดุเปิดสิทธิ์ให้กลุ่มหน่วยงาน/ฝ่าย (${deptIds.length} แผนก) เข้าปรับปรุงแผนงบประมาณระหว่างปี (${note || 'อนุมัติสิทธิ์แบบกลุ่ม'})`
+        : `ฝ่ายพัสดุปิดสิทธิ์การปรับปรุงแผนงบประมาณของกลุ่มหน่วยงาน (${deptIds.length} แผนก)`
+    );
+
+    deptIds.forEach(deptId => {
+      fetch(`${apiBase}/procurement/revision/unlock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deptId,
+          isUnlocked,
+          note,
+          expiresAt,
+          unlockedBy: currentUser ? currentUser.username : 'proc_officer'
+        })
+      }).catch(err => console.error('Error syncing revision permission:', err));
+    });
+  };
+
   const handleSubmitRevisionPlan = (
     deptId: string, 
     items: { 
@@ -915,8 +958,9 @@ export default function App() {
       qtyRequested: number; 
       revisionType: 'add' | 'modify' | 'cancel'; 
       revisionBaseQty?: number;
-      revisionReason: string;
-    }[]
+      revisionReason?: string;
+    }[],
+    overallReason?: string
   ) => {
     setRequests(prev => {
       let updated = [...prev];
@@ -927,6 +971,17 @@ export default function App() {
           if (idx !== -1) {
             const old = updated[idx];
             const baseQty = old.revisionBaseQty !== undefined ? old.revisionBaseQty : old.qtyRequested;
+            const logEntry = createAuditEntry({
+              role: currentUser?.role || 'staff',
+              actorName: currentUser?.name || 'เจ้าหน้าที่ผู้ขอ',
+              action: 'revision',
+              actionLabelTh: item.revisionType === 'cancel' ? `ยื่นขอยกเลิกรายการเดิม (เดิม ${baseQty} ${old.unit})` : `ยื่นขอปรับยอดจาก ${baseQty} เป็น ${item.qtyRequested} ${old.unit}`,
+              oldQty: baseQty,
+              newQty: item.revisionType === 'cancel' ? 0 : item.qtyRequested,
+              oldStatus: old.status,
+              newStatus: 'pending_head',
+              reason: item.revisionReason || overallReason
+            });
             updated[idx] = {
               ...old,
               qtyRequested: item.revisionType === 'cancel' ? 0 : item.qtyRequested,
@@ -939,32 +994,45 @@ export default function App() {
               revisionRequestedAt: new Date().toISOString(),
               revisionRequestedBy: currentUser ? currentUser.name : undefined,
               status: 'pending_head',
-              comment: item.revisionType === 'cancel' ? `[ขอยกเลิกรายการ] ${item.revisionReason}` : `[ขอปรับปรุงยอด] ${item.revisionReason}`
+              comment: item.revisionType === 'cancel' ? `[ขอยกเลิกรายการ] ${item.revisionReason || overallReason || ''}` : `[ขอปรับปรุงยอด] ${item.revisionReason || overallReason || ''}`,
+              auditLogs: [...(old.auditLogs || []), logEntry]
             };
           }
         } else {
           // Newly added item during mid-year revision
           const newId = 'REQ-REV-' + String(Math.floor(Math.random() * 90000) + 10000);
+          const itemUnit = item.unit || CUSTOM_UNITS[item.itemName] || guessUnit(item.itemName);
+          const logEntry = createAuditEntry({
+            role: currentUser?.role || 'staff',
+            actorName: currentUser?.name || 'เจ้าหน้าที่ผู้ขอ',
+            action: 'revision',
+            actionLabelTh: `ยื่นขอเพิ่มรายการพัสดุใหม่กลางปี (${item.qtyRequested} ${itemUnit})`,
+            oldQty: 0,
+            newQty: item.qtyRequested,
+            newStatus: 'pending_head',
+            reason: item.revisionReason || overallReason
+          });
           updated.push({
             id: newId,
             deptId,
             itemName: item.itemName,
-            unit: item.unit || CUSTOM_UNITS[item.itemName] || guessUnit(item.itemName),
+            unit: itemUnit,
             qtyLastYear: 0,
             qtyOriginal: item.qtyRequested,
             qtyRequested: item.qtyRequested,
             status: 'pending_head',
-            comment: `[ขอเพิ่มรายการใหม่กลางปี] ${item.revisionReason}`,
-            reason: item.revisionReason,
+            comment: `[ขอเพิ่มรายการใหม่กลางปี] ${item.revisionReason || overallReason || ''}`,
+            reason: item.revisionReason || overallReason,
             unitPrice: itemPrices[item.itemName] ?? null,
             fiscalYear,
             isRevisionItem: true,
             revisionType: 'add',
             revisionBaseQty: 0,
-            revisionReason: item.revisionReason,
+            revisionReason: item.revisionReason || overallReason,
             revisionStatus: 'submitted',
             revisionRequestedAt: new Date().toISOString(),
-            revisionRequestedBy: currentUser ? currentUser.name : undefined
+            revisionRequestedBy: currentUser ? currentUser.name : undefined,
+            auditLogs: [logEntry]
           });
         }
       });
@@ -979,6 +1047,52 @@ export default function App() {
   };
 
   // Procurement Handlers
+  const handleAddProcurementRequest = (item: {
+    deptId: string;
+    itemName: string;
+    unit?: string;
+    qtyRequested: number;
+    unitPrice?: number;
+    reason: string;
+  }) => {
+    const trimmedItemName = item.itemName.trim();
+    const itemUnit = item.unit?.trim() || CUSTOM_UNITS[trimmedItemName] || guessUnit(trimmedItemName);
+    const newReqId = 'REQ-PROC-' + String(Math.floor(Math.random() * 90000) + 10000);
+    
+    if (item.unitPrice !== undefined && item.unitPrice > 0) {
+      setItemPrices(prev => ({ ...prev, [trimmedItemName]: item.unitPrice! }));
+    }
+
+    const logEntry = createAuditEntry({
+      role: currentUser?.role || 'proc',
+      actorName: currentUser?.name || 'เจ้าหน้าที่ฝ่ายพัสดุ',
+      action: 'submit',
+      actionLabelTh: 'เจ้าหน้าที่พัสดุเพิ่มรายการใหม่เข้าสู่แผนจัดซื้อโดยตรง',
+      newQty: item.qtyRequested,
+      newStatus: 'pending_proc',
+      reason: item.reason
+    });
+
+    const newRequest: RequestItem = {
+      id: newReqId,
+      deptId: item.deptId,
+      itemName: trimmedItemName,
+      unit: itemUnit,
+      qtyLastYear: 0,
+      qtyOriginal: item.qtyRequested,
+      qtyRequested: item.qtyRequested,
+      status: 'pending_proc',
+      comment: `[พัสดุเพิ่มรายการเข้าแผน] ${item.reason}`,
+      reason: item.reason,
+      unitPrice: item.unitPrice ?? itemPrices[trimmedItemName] ?? guessPrice(trimmedItemName, itemUnit),
+      fiscalYear,
+      auditLogs: [logEntry]
+    };
+
+    setRequests(prev => [...prev, newRequest]);
+    logAction('add', 'requests', `เจ้าหน้าที่ฝ่ายพัสดุเพิ่มรายการ '${trimmedItemName}' จำนวน ${item.qtyRequested} ${itemUnit} ให้ฝ่าย '${item.deptId}' เข้าแผนจัดซื้อพัสดุ`);
+  };
+
   const handleUpdateUnitPrice = (itemName: string, price: number) => {
     setItemPrices(prev => ({ ...prev, [itemName]: price }));
     logAction('edit', 'materials', `เจ้าหน้าที่พัสดุปรับปรุงราคากลางสำหรับ '${itemName}' เป็น ${price} บาท`);
@@ -1695,7 +1809,7 @@ export default function App() {
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
-                  Live Sync v1.15
+                  Live Sync v1.17
                 </span>
               </p>
             </div>
@@ -2242,6 +2356,8 @@ export default function App() {
                 workGroups={workGroups}
                 revisionPermissions={revisionPermissions}
                 onUnlockRevision={handleUnlockRevision}
+                onBatchUnlockRevision={handleBatchUnlockRevision}
+                onAddProcurementRequest={handleAddProcurementRequest}
                 onUpdateUnitPrice={handleUpdateUnitPrice}
                 onUpdateQty={handleUpdateQty}
                 onSubmitToProcHead={handleSubmitToProcHead}
@@ -2262,6 +2378,8 @@ export default function App() {
                 workGroups={workGroups}
                 revisionPermissions={revisionPermissions}
                 onUnlockRevision={handleUnlockRevision}
+                onBatchUnlockRevision={handleBatchUnlockRevision}
+                onAddProcurementRequest={handleAddProcurementRequest}
                 onUpdateUnitPrice={handleUpdateUnitPrice}
                 onUpdateQty={handleUpdateQty}
                 onApproveToExec={handleProcHeadApproveToExec}
@@ -2512,11 +2630,13 @@ export default function App() {
         <ChangePasswordModal
           currentUser={currentUser}
           onClose={() => setShowChangePasswordModal(false)}
-          onSavePassword={newPw => {
-            handleResetUserPassword(currentUser.username, newPw);
-            setCurrentUser(prev => prev ? { ...prev, password: newPw } : null);
-            setShowChangePasswordModal(false);
-            handleToast('เปลี่ยนรหัสผ่านของคุณสำเร็จเรียบร้อยแล้ว', 'success');
+          onSavePassword={async (currPw, newPw) => {
+            const res = await handleChangeSelfPassword(currPw, newPw);
+            if (res.success) {
+              setShowChangePasswordModal(false);
+              handleToast('เปลี่ยนรหัสผ่านของคุณสำเร็จเรียบร้อยแล้ว', 'success');
+            }
+            return res;
           }}
         />
       )}
